@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+
+"""
+CKB client for Spark Knowledge Base
+"""
 import time
 import aiohttp
 import json
@@ -15,6 +20,8 @@ import asyncio
 
 
 class CkbClient:
+    """Client for Spark Knowledge Base API"""
+    
     def __init__(self, intranet: bool = True):
         self.intranet = intranet
         if intranet:
@@ -29,8 +36,8 @@ class CkbClient:
             self.get_answer_url = f"https://ssc.mohrss.gov.cn/ckb/spark-knowledge/v1/qalog/"
 
         self.add_app_name = "ckb" + str(time.time())
-
-        logger.info(f"新增app名称:{self.add_app_name}")
+        logger.info(f"New app name: {self.add_app_name}")
+        
         self.DEFAULT_TRANSFORMATION = padding.OAEP(
             mgf=padding.MGF1(algorithm=hashes.SHA256()),
             algorithm=hashes.SHA256(),
@@ -38,30 +45,29 @@ class CkbClient:
         )
 
     def _create_ssl_context(self):
-        """创建支持传统SSL重新协商的SSL上下文"""
+        """Create SSL context supporting legacy renegotiation"""
         ssl_context = ssl.create_default_context()
-        # 允许不安全的传统重新协商（仅用于兼容旧服务器）
+        # Allow unsafe legacy renegotiation (for compatibility with old servers)
         ssl_context.options |= ssl.OP_LEGACY_SERVER_CONNECT
         return ssl_context
 
     def _get_session(self):
-        """根据intranet标志创建合适的ClientSession"""
+        """Create appropriate ClientSession based on intranet flag"""
         if not self.intranet:
-            # 外网连接需要SSL上下文
+            # External network connection requires SSL context
             ssl_context = self._create_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_context)
             return aiohttp.ClientSession(connector=connector)
         else:
-            # 内网连接不需要SSL
+            # Internal network connection doesn't need SSL
             return aiohttp.ClientSession()
 
-    # 新增 app
     async def ckb_add(self, cookie, tenant_id):
         headers = {'Content-Type': "application/json", "Cookie": cookie}
 
         request_data = {
             "appCode": self.add_app_name,
-            "appName": "星火知识库测试",
+            "appName": "Spark Knowledge Base Test",
             "tenantId": tenant_id
         }
 
@@ -76,22 +82,21 @@ class CkbClient:
                     message = response_json_data.get("message")
 
                     if code == "CKB-GW001":
-                        logger.info(f"星火知识库app已存在，具体信息:{message}")
+                        logger.info(f"Spark Knowledge Base app already exists, details: {message}")
                         return True, message
 
                     if code != "CKB-0000":
-                        logger.error(f"星火知识车新增app失败，错误信息:{message}")
+                        logger.error(f"Failed to add Spark Knowledge Base app, error: {message}")
                         return False, message
 
                     public_key = response_json_data.get("data").get("publicKey")
                     public_key_b64 = base64.b64decode(public_key)
                     public_key_b64 = load_der_public_key(public_key_b64, backend=default_backend())
-                    logger.info(
-                        f"星火知识库新增app成功，原始publick_key:{public_key}，加密后的publick_ley: {public_key_b64}")
+                    logger.info(f"Successfully added Spark Knowledge Base app, public_key loaded")
                     return True, public_key_b64
 
             except Exception as e:
-                logger.error(f"uap系统获取token失败，未知错误信息:{e}")
+                logger.error(f"UAP system failed to get token, error: {e}")
                 return False, e
 
     def encrypt(self, plain_text, public_key):
@@ -134,38 +139,37 @@ class CkbClient:
                     message = response_json_data.get("message")
 
                     if code != "CKB-0000":
-                        logger.error(f"星火知识库login失败，错误信息:{message}")
+                        logger.error(f"Spark Knowledge Base login failed, error: {message}")
                         return False, message
 
                     data = response_json_data.get("data")
-
-                    logger.info(f"星火知识库login成功:{data}")
+                    logger.info(f"Spark Knowledge Base login successful")
                     return True, data
 
             except Exception as e:
-                logger.error(f"星火知识库login失败，未知错误信息:{e}")
+                logger.error(f"Spark Knowledge Base login failed, error: {e}")
                 return False, e
 
     async def get_auth_app(self):
         self.user_id, self.tenant_id, self.cookie_session = await login_knowledge()
 
         if not self.cookie_session:
-            logger.error(f"获取cookie失败，跳过后续步")
+            logger.error("Failed to get cookie, skipping subsequent steps")
             return False, None
 
         res, public_key = await self.ckb_add(self.cookie_session, self.tenant_id)
         if not res:
-            logger.error(f"获取publick key失败:{public_key},跳过后续步骤")
+            logger.error(f"Failed to get public key: {public_key}, skipping subsequent steps")
             return False, None
 
         jar_string = self.get_pwd(public_key)
         if not jar_string:
-            logger.error(f"获取jar string失败，跳过后续步骤")
+            logger.error("Failed to get jar string, skipping subsequent steps")
             return False, None
 
         res, auth_app = await self.login(jar_string)
         if not res:
-            logger.error(f"获取auth_app失败:{auth_app}，跳过后续步骤")
+            logger.error(f"Failed to get auth_app: {auth_app}, skipping subsequent steps")
             return False, None
         return True, auth_app
 
@@ -185,15 +189,15 @@ class CkbClient:
                     code = response_json_data.get("code")
 
                     if code != "CKB-0000":
-                        logger.error(f"星火知识库get_answer失败，错误信息:{response_data}")
+                        logger.error(f"Spark Knowledge Base get_answer failed, error: {response_data}")
                         retrieval_list.append(response_data)
-                        return False, "发生错误", retrieval_list
+                        return False, "Error occurred", retrieval_list
 
                     data = response_json_data.get("data")
                     if not data:
-                        logger.error(f"星火知识库get_answer失败，检索为空错误信息:{response_data}")
+                        logger.error(f"Spark Knowledge Base get_answer failed, retrieval is empty: {response_data}")
                         retrieval_list.append(response_data)
-                        return False, "检索为空", retrieval_list
+                        return False, "Retrieval is empty", retrieval_list
 
                     process_list = data["processList"]
 
@@ -209,7 +213,7 @@ class CkbClient:
                             response = process["response"]
                 return True, response, retrieval_list[:10]
         except Exception as e:
-            logger.error(f"星火知识库get_answer失败，未知错误信息:{e}")
+            logger.error(f"Spark Knowledge Base get_answer failed, error: {e}")
             retrieval_list.append(e)
             return False, e, retrieval_list
 
@@ -220,7 +224,7 @@ class CkbClient:
         data = {
             "sessionId": session_id,
             "dbList": [],
-            "title": "测试",
+            "title": "Test",
             "model": config_manager.ckb_model
         }
 
@@ -230,11 +234,11 @@ class CkbClient:
                 logger.info(f"-------------------{response_text}")
                 response_json = json.loads(response_text)
                 if response_json["code"] == "CKB-0000":
-                    logger.info(f"保存会话ID: {response_json}")
+                    logger.info(f"Session ID saved successfully")
                     id = response_json["data"]
                     return id
                 else:
-                    logger.error(f"保存会话ID失败: {response_json}")
+                    logger.error(f"Failed to save session ID: {response_json}")
                     return None
 
     def get_url(self, session_id, intranet: bool = True):
@@ -244,10 +248,11 @@ class CkbClient:
             self.qa_url = f"wss://ssc.mohrss.gov.cn/spark-knowledge/sparkRequest?loginName={config_manager.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
 
     async def ckb_qa(self, question, session_id):
+        """Query Spark Knowledge Base with a question"""
         self.get_url(session_id, intranet=False)
-        logger.info(f"星火知识库请求URL: {self.qa_url}")
+        logger.info(f"Spark Knowledge Base request URL: {self.qa_url}")
        
-        # WebSocket连接：如果使用wss://（外网），需要SSL上下文
+        # WebSocket connection: if using wss:// (external network), SSL context is required
         if self.qa_url.startswith('wss://'):
             ssl_context = self._create_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_context)
@@ -259,7 +264,7 @@ class CkbClient:
             async with session.ws_connect(self.qa_url) as self.ws:
                 request_id = str(uuid.uuid4()).replace("-", "")[:16]
 
-                # 星火知识库 sparkRequest 请求
+                # Spark Knowledge Base sparkRequest request
                 data = {
                     "header": {"traceId": "06bedb17-ajklyujhk"},
                     "payload": {
@@ -289,8 +294,8 @@ class CkbClient:
                     }
                 }
 
-                # 调试：打印发送的数据
-                logger.info(f"发送的WebSocket数据: {json.dumps(data, ensure_ascii=False, indent=2)}")
+                # Debug: print sent data
+                logger.info(f"WebSocket data sent: {json.dumps(data, ensure_ascii=False, indent=2)}")
 
                 await self.send(data)
                 response_temp = await self.recv()
@@ -298,46 +303,48 @@ class CkbClient:
                 return True, response_temp, request_id
 
     async def send(self, data):
+        """Send data through WebSocket"""
         self.start_time = time.time()
         data = json.dumps(data, ensure_ascii=False)
         await self.ws.send_str(data)
-        logger.info(f"星火知识库发送请求: {data}")
+        logger.info(f"Spark Knowledge Base request sent: {data[:200]}...")
 
     async def recv(self):
+        """Receive response from WebSocket"""
         try:
             response_final = ""
-            reasoning_final = ""  # 推理过程内容
+            reasoning_final = ""  # Reasoning process content
             while True:
                 origin_response = await asyncio.wait_for(self.ws.receive_str(), timeout=180)
                 self.response_temp = json.loads(origin_response)
-                logger.info(f"返回帧：{json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
+                logger.info(f"Response frame: {json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
                 status = self.response_temp["header"]["status"]
                 if status == 3:
                     continue
                 if status == -4 or status == -5:
                     return self.response_temp
                 
-                # 获取text数组的第一个元素
+                # Get first element of text array
                 text_item = self.response_temp["payload"]["choices"]["text"][0]
                 
-                # 慢思考模式：先收集推理过程 reasoningContent
+                # Slow thinking mode: collect reasoning process reasoningContent first
                 if "reasoningContent" in text_item and text_item["reasoningContent"]:
                     reasoning_content = text_item["reasoningContent"]
                     reasoning_final += reasoning_content
-                    logger.debug(f"收集推理过程: {reasoning_content}")
+                    logger.debug(f"Collecting reasoning process: {reasoning_content[:100]}...")
                 
-                # 收集回复内容 content（快思考模式直接收集，慢思考模式在推理过程后收集）
+                # Collect response content (fast thinking mode collects directly, slow thinking mode collects after reasoning)
                 if "content" in text_item and text_item["content"]:
                     content = text_item["content"]
                     response_final += content
-                    logger.debug(f"收集回复内容: {content}")
+                    logger.debug(f"Collecting response content: {content[:100]}...")
                 
                 if status == 2:
-                    # 如果有推理过程，将推理过程和回复内容组合返回
+                    # If there's reasoning process, combine reasoning and response content
                     if reasoning_final:
                         return f"{reasoning_final}\n\n{response_final}"
                     else:
                         return response_final
         except asyncio.TimeoutError:
-            return "接收知识库返回超时"
+            return "Timeout receiving response from knowledge base"
 
