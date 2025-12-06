@@ -85,7 +85,7 @@ class ConversationTask:
                 result[f'溯源{i}'] = ''
         
         # Add model response and IDs
-        result['大模型返回答案'] = self.model_response if self.model_response else ''
+        result['模型回复'] = self.model_response if self.model_response else ''
         result['RequestId'] = self.request_id if self.request_id else ''
         result['SessionId'] = self.session_id if self.session_id else ''
         
@@ -272,7 +272,7 @@ class ExcelHandler:
         # Define column order (dynamic based on config)
         base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
         source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
-        result_columns = ['大模型返回答案', 'RequestId', 'SessionId']
+        result_columns = ['模型回复', 'RequestId', 'SessionId']
         column_order = base_columns + source_columns + result_columns
         
         # Reorder columns (only include columns that exist)

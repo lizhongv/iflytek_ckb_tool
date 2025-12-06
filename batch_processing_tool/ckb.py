@@ -272,7 +272,7 @@ class CkbClient:
             session = aiohttp.ClientSession()
         
         async with session:
-            async with session.ws_connect(self.qa_url) as self.ws:
+            async with session.ws_connect(self.qa_url) as ws:
                 request_id = str(uuid.uuid4()).replace("-", "")[:16]
 
                 # Spark Knowledge Base sparkRequest request
@@ -307,35 +307,35 @@ class CkbClient:
 
                 # Debug: print sent data
                 logger.debug(f"WebSocket data sent: {json.dumps(data, ensure_ascii=False, indent=2)}")
-                await self.send(data)
-                response_temp = await self.recv()
+                await self._send(ws, data)
+                response_temp = await self._recv(ws)
 
                 return True, response_temp, request_id
 
-    async def send(self, data):
+    async def _send(self, ws, data):
         """Send data through WebSocket"""
         self.start_time = time.time()
-        data = json.dumps(data, ensure_ascii=False)
-        logger.debug(f"Spark Knowledge Base request sent: {data[:200]}...")
-        await self.ws.send_str(data)
+        data_str = json.dumps(data, ensure_ascii=False)
+        logger.debug(f"Spark Knowledge Base request sent: {data_str[:200]}...")
+        await ws.send_str(data_str)
 
-    async def recv(self):
+    async def _recv(self, ws):
         """Receive response from WebSocket"""
         try:
             response_final = ""
             reasoning_final = ""  # Reasoning process content
             while True:
-                origin_response = await asyncio.wait_for(self.ws.receive_str(), timeout=180)
-                self.response_temp = json.loads(origin_response)
-                logger.debug(f"Response frame: {json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
-                status = self.response_temp["header"]["status"]
+                origin_response = await asyncio.wait_for(ws.receive_str(), timeout=180)
+                response_temp = json.loads(origin_response)
+                logger.debug(f"Response frame: {json.dumps(response_temp, ensure_ascii=False, indent=2)}")
+                status = response_temp["header"]["status"]
                 if status == 3:
                     continue
                 if status == -4 or status == -5:
-                    return self.response_temp
+                    return response_temp
                 
                 # Get first element of text array
-                text_item = self.response_temp["payload"]["choices"]["text"][0]
+                text_item = response_temp["payload"]["choices"]["text"][0]
                 
                 # Slow thinking mode: collect reasoning process reasoningContent first
                 if "reasoningContent" in text_item and text_item["reasoningContent"]:
