@@ -423,7 +423,7 @@ async def main() -> dict:
             # Default configuration
             config = AnalysisConfig(
                 query_selected=True,
-                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\batch_data.xlsx",
+                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\test_examples_output_20251206_202503.xlsx",
                 chunk_selected=True,
                 answer_selected=True,
                 problem_analysis=True,

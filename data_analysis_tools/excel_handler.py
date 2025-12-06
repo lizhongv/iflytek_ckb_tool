@@ -83,17 +83,31 @@ class ExcelHandler:
                 model_response = str(row.get(response_col, '')).strip()
             
             # Extract source list (find columns containing 'source' or '溯源')
-            # Priority: look for 溯源1, 溯源2, ..., 溯源8, then fallback to other source columns
+            # Priority: look for 溯源1, 溯源2, ..., 溯源10 (or more), then fallback to other source columns
             # Note: sources are needed for recall analysis, not just when chunk_selected
             sources = []
-            # First, try to find numbered source columns (溯源1~溯源8)
-            for i in range(1, 9):
-                source_col_name = f'溯源{i}'
-                if source_col_name in self.df.columns:
-                    if not pd.isna(row.get(source_col_name)):
-                        source_value = str(row.get(source_col_name, '')).strip()
-                        if source_value:
-                            sources.append(source_value)
+            # First, try to find numbered source columns (溯源1~溯源10 or more)
+            # Dynamically detect the maximum number of source columns
+            max_source_num = 0
+            for col in self.df.columns:
+                if str(col).startswith('溯源'):
+                    # Extract number from column name like "溯源1", "溯源10", etc.
+                    try:
+                        num_str = str(col).replace('溯源', '').strip()
+                        if num_str.isdigit():
+                            max_source_num = max(max_source_num, int(num_str))
+                    except:
+                        pass
+            
+            # If found numbered source columns, read them (only non-empty values)
+            if max_source_num > 0:
+                for i in range(1, max_source_num + 1):
+                    source_col_name = f'溯源{i}'
+                    if source_col_name in self.df.columns:
+                        if not pd.isna(row.get(source_col_name)):
+                            source_value = str(row.get(source_col_name, '')).strip()
+                            if source_value:
+                                sources.append(source_value)
             
             # If no numbered sources found, look for other source columns
             if not sources:
@@ -133,79 +147,97 @@ class ExcelHandler:
         result_data = []
         
         # Find maximum number of sources to determine column count
-        max_sources = 0
+        # First, check the original input file for source column count
+        max_sources_from_input = 0
+        if self.df is not None:
+            for col in self.df.columns:
+                if str(col).startswith('溯源'):
+                    # Extract number from column name like "溯源1", "溯源10", etc.
+                    try:
+                        num_str = str(col).replace('溯源', '').strip()
+                        if num_str.isdigit():
+                            max_sources_from_input = max(max_sources_from_input, int(num_str))
+                    except:
+                        pass
+        
+        # Also check from results data
+        max_sources_from_results = 0
         for result in results:
             if result.input_data.sources:
-                max_sources = max(max_sources, len(result.input_data.sources))
+                max_sources_from_results = max(max_sources_from_results, len(result.input_data.sources))
+        
+        # Use the maximum of both to ensure we match the input file structure
+        max_sources = max(max_sources_from_input, max_sources_from_results)
+        logger.info(f"Using {max_sources} source columns (from input: {max_sources_from_input}, from results: {max_sources_from_results})")
         
         for result in results:
             row_data = {}
             
-            # Basic input fields
-            row_data['question'] = result.input_data.question if result.input_data.question else ''
-            row_data['correct_source'] = result.input_data.correct_source if result.input_data.correct_source else ''
-            row_data['correct_answer'] = result.input_data.correct_answer if result.input_data.correct_answer else ''
+            # Basic input fields - use Chinese column names
+            row_data['问题'] = result.input_data.question if result.input_data.question else ''
+            row_data['参考溯源'] = result.input_data.correct_source if result.input_data.correct_source else ''
+            row_data['参考答案'] = result.input_data.correct_answer if result.input_data.correct_answer else ''
             
-            # Source fields (source1, source2, ...)
+            # Source fields (溯源1, 溯源2, ...) - use Chinese column names
             # Fill all source columns up to max_sources
             for i in range(1, max_sources + 1):
                 if result.input_data.sources and i <= len(result.input_data.sources):
-                    row_data[f'source{i}'] = result.input_data.sources[i - 1] if result.input_data.sources[i - 1] else ''
+                    row_data[f'溯源{i}'] = result.input_data.sources[i - 1] if result.input_data.sources[i - 1] else ''
                 else:
-                    row_data[f'source{i}'] = ''
+                    row_data[f'溯源{i}'] = ''
             
-            # Problem analysis results
+            # Problem analysis results - use Chinese column names
             if result.problem_analysis:
-                row_data['is_standard'] = result.problem_analysis.is_normative if result.problem_analysis.is_normative is not None else ''
-                row_data['question_type'] = result.problem_analysis.problem_type if result.problem_analysis.problem_type else ''
-                row_data['question_reason'] = result.problem_analysis.reason if result.problem_analysis.reason else ''
+                row_data['是否规范'] = result.problem_analysis.is_normative if result.problem_analysis.is_normative is not None else ''
+                row_data['问题类型'] = result.problem_analysis.problem_type if result.problem_analysis.problem_type else ''
+                row_data['问题原因'] = result.problem_analysis.reason if result.problem_analysis.reason else ''
             else:
-                row_data['is_standard'] = ''
-                row_data['question_type'] = ''
-                row_data['question_reason'] = ''
+                row_data['是否规范'] = ''
+                row_data['问题类型'] = ''
+                row_data['问题原因'] = ''
             
-            # Set analysis results - in/out set judgment
+            # Set analysis results - in/out set judgment - use Chinese column names
             if result.set_analysis:
-                row_data['is_in_set'] = result.set_analysis.is_in_set if result.set_analysis.is_in_set is not None else ''
-                row_data['in_out_type'] = result.set_analysis.in_out_type if result.set_analysis.in_out_type else ''
-                row_data['in_out_reason'] = result.set_analysis.reason if result.set_analysis.reason else ''
+                row_data['是否在集'] = result.set_analysis.is_in_set if result.set_analysis.is_in_set is not None else ''
+                row_data['在集类型'] = result.set_analysis.in_out_type if result.set_analysis.in_out_type else ''
+                row_data['在集原因'] = result.set_analysis.reason if result.set_analysis.reason else ''
             else:
-                row_data['is_in_set'] = ''
-                row_data['in_out_type'] = ''
-                row_data['in_out_reason'] = ''
+                row_data['是否在集'] = ''
+                row_data['在集类型'] = ''
+                row_data['在集原因'] = ''
             
-            # Recall analysis results - retrieval judgment (by source)
+            # Recall analysis results - retrieval judgment (by source) - use Chinese column names
             if result.recall_analysis and result.recall_analysis.is_retrieval_correct is not None:
-                row_data['is_retrieval_correct'] = result.recall_analysis.is_retrieval_correct
-                row_data['retrieval_judgment_type'] = result.recall_analysis.retrieval_judgment_type if result.recall_analysis.retrieval_judgment_type else ''
-                row_data['retrieval_reason'] = result.recall_analysis.retrieval_reason if result.recall_analysis.retrieval_reason else ''
+                row_data['检索是否正确'] = result.recall_analysis.is_retrieval_correct
+                row_data['检索判断类型'] = result.recall_analysis.retrieval_judgment_type if result.recall_analysis.retrieval_judgment_type else ''
+                row_data['检索原因'] = result.recall_analysis.retrieval_reason if result.recall_analysis.retrieval_reason else ''
             else:
-                row_data['is_retrieval_correct'] = ''
-                row_data['retrieval_judgment_type'] = ''
-                row_data['retrieval_reason'] = ''
+                row_data['检索是否正确'] = ''
+                row_data['检索判断类型'] = ''
+                row_data['检索原因'] = ''
             
-            # Response analysis results (by answer)
+            # Response analysis results (by answer) - use Chinese column names
             if result.response_analysis and result.response_analysis.is_response_correct is not None:
-                row_data['is_response_correct'] = result.response_analysis.is_response_correct
-                row_data['response_judgment_type'] = result.response_analysis.response_judgment_type if result.response_analysis.response_judgment_type else ''
-                row_data['response_reason'] = result.response_analysis.response_reason if result.response_analysis.response_reason else ''
+                row_data['回复是否正确'] = result.response_analysis.is_response_correct
+                row_data['回复判断类型'] = result.response_analysis.response_judgment_type if result.response_analysis.response_judgment_type else ''
+                row_data['回复原因'] = result.response_analysis.response_reason if result.response_analysis.response_reason else ''
             else:
-                row_data['is_response_correct'] = ''
-                row_data['response_judgment_type'] = ''
-                row_data['response_reason'] = ''
+                row_data['回复是否正确'] = ''
+                row_data['回复判断类型'] = ''
+                row_data['回复原因'] = ''
             
             result_data.append(row_data)
         
         result_df = pd.DataFrame(result_data)
         
-        # Define column order
-        base_columns = ['question', 'correct_source', 'correct_answer']
-        source_columns = [f'source{i}' for i in range(1, max_sources + 1)] if max_sources > 0 else []
+        # Define column order - use Chinese column names
+        base_columns = ['问题', '参考溯源', '参考答案']
+        source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)] if max_sources > 0 else []
         analysis_columns = [
-            'is_standard', 'question_type', 'question_reason',
-            'is_in_set', 'in_out_type', 'in_out_reason',
-            'is_retrieval_correct', 'retrieval_judgment_type', 'retrieval_reason',
-            'is_response_correct', 'response_judgment_type', 'response_reason'
+            '是否规范', '问题类型', '问题原因',
+            '是否在集', '在集类型', '在集原因',
+            '检索是否正确', '检索判断类型', '检索原因',
+            '回复是否正确', '回复判断类型', '回复原因'
         ]
         column_order = base_columns + source_columns + analysis_columns
         

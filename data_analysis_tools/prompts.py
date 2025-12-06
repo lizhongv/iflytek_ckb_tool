@@ -188,34 +188,94 @@ RECALL_JUDGMENT_BY_ANSWER_PROMPT = """你是一位检索质量评估专家，专
 请严格按照上述规范对召回溯源文本与正确答案的相关性进行判定，并以JSON格式输出结果。"""
 
 # Response accuracy judgment prompt (compare model response with correct answer)
-RESPONSE_ACCURACY_PROMPT = """你是一个专业的回复质量评估专家。请分析以下模型回复是否正确。
+RESPONSE_ACCURACY_PROMPT = """你是一位回复质量评估专家，专注于分析模型回复的准确性、完整性和相关性。
+## 核心任务
+基于用户问题、正确答案和模型回复，判断回复是否正确，并归类到七类回复问题类型中。
 
-问题：{question}
-正确答案：{correct_answer}
-模型回复：{model_response}
+## 判断流程
+1. 比较模型回复与正确答案；
+2. 确认是否完整覆盖、语义一致、无错误信息；
+3. 根据判定规则呼出类别及理由。
 
-请按照以下JSON格式输出：
+## 注意
+- 正确答案是回答用户问题的正确知识；
+- 模型回复是模型实际生成的回答内容；
+- 需评估回复是否与正确答案含义一致，是否完整覆盖全部必需信息。
+
+## 回复问题类型（七类，必须严格使用英文类型名称）：
+1. **Fully Correct**（完全正确）：模型回复完全符合正确答案，信息完整、准确、无遗漏。
+2. **Partially Correct**（部分正确）：模型回复包含部分正确信息，但存在部分错误或不准确的内容。
+3. **Incomplete Information**（信息不完整）：模型回复信息正确但不够完整，遗漏了部分重要信息。
+4. **Incorrect Information**（信息错误）：模型回复包含错误信息，与正确答案不符。
+5. **Irrelevant Answer**（无关回答）：模型回复与问题无关，未回答用户问题。
+6. **Format Error**（格式错误）：模型回复格式不正确，无法正常阅读或理解。
+7. **Other**（其他问题）：不属于上述六类的其他问题。
+
+## 输出要求
+- 若回复完全正确（即类型1 Fully Correct），则 is_response_correct 设为 1，否则设为 0
+- response_judgment_type **必须**填写上述七种英文类型之一：Fully Correct、Partially Correct、Incomplete Information、Incorrect Information、Irrelevant Answer、Format Error、Other
+- response_reason 提供简洁说明（≤50字），基于问题、正确答案与模型回复的对比分析
+
+## 输出格式
+请严格按照以下JSON格式输出，不得添加额外内容：
 
 {{
   "is_response_correct": 0或1,
-  "response_judgment_type": "七大类型之一：1.Fully Correct 2.Partially Correct 3.Incomplete Information 4.Incorrect Information 5.Irrelevant Answer 6.Format Error 7.Other",
-  "response_reason": "详细说明判断理由"
+  "response_judgment_type": "上述七类回复类型之一",
+  "response_reason": "xxx（具体说明，最多50字）"
 }}
-"""
+
+## 输入数据
+
+- 用户问题：{question}
+- 正确答案：{correct_answer}
+- 模型回复：{model_response}
+
+请严格按照上述规范对模型回复与正确答案的相关性进行判定，并以JSON格式输出结果。"""
 
 # Response accuracy judgment prompt (compare model response with correct source)
-RESPONSE_ACCURACY_BY_SOURCE_PROMPT = """你是一个专业的回复质量评估专家。请分析以下模型回复是否与正确溯源匹配。
+RESPONSE_ACCURACY_BY_SOURCE_PROMPT = """你是一位回复质量评估专家，专注于分析模型回复的准确性、完整性和相关性。
+## 核心任务
+基于用户问题、正确参考知识集合和模型回复，判断回复是否正确，并归类到七类回复问题类型中。
 
-问题：{question}
-正确溯源：{correct_source}
-模型回复：{model_response}
+## 判断流程
+1. 比较模型回复与正确参考知识集合；
+2. 确认是否完整覆盖、语义一致、无错误信息；
+3. 根据判定规则呼出类别及理由。
 
-请按照以下JSON格式输出：
+## 注意
+- 正确参考知识集合是回答用户问题所需的知识块集合；
+- 模型回复是模型实际生成的回答内容；
+- 需评估回复是否与正确知识含义一致，是否完整覆盖全部必需信息。
+
+## 回复问题类型（七类，必须严格使用英文类型名称）：
+1. **Fully Correct**（完全正确）：模型回复完全符合正确参考知识，信息完整、准确、无遗漏。
+2. **Partially Correct**（部分正确）：模型回复包含部分正确信息，但存在部分错误或不准确的内容。
+3. **Incomplete Information**（信息不完整）：模型回复信息正确但不够完整，遗漏了部分重要信息。
+4. **Incorrect Information**（信息错误）：模型回复包含错误信息，与正确参考知识不符。
+5. **Irrelevant Answer**（无关回答）：模型回复与问题无关，未回答用户问题。
+6. **Format Error**（格式错误）：模型回复格式不正确，无法正常阅读或理解。
+7. **Other**（其他问题）：不属于上述六类的其他问题。
+
+## 输出要求
+- 若回复完全正确（即类型1 Fully Correct），则 is_response_correct 设为 1，否则设为 0
+- response_judgment_type **必须**填写上述七种英文类型之一：Fully Correct、Partially Correct、Incomplete Information、Incorrect Information、Irrelevant Answer、Format Error、Other
+- response_reason 提供简洁说明（≤50字），基于问题、正确参考知识与模型回复的对比分析
+
+## 输出格式
+请严格按照以下JSON格式输出，不得添加额外内容：
 
 {{
   "is_response_correct": 0或1,
-  "response_judgment_type": "七大类型之一：1.Fully Correct 2.Partially Correct 3.Incomplete Information 4.Incorrect Information 5.Irrelevant Answer 6.Format Error 7.Other",
-  "response_reason": "详细说明判断理由"
+  "response_judgment_type": "上述七类回复类型之一",
+  "response_reason": "xxx（具体说明，最多50字）"
 }}
-"""
+
+## 输入数据
+
+- 用户问题：{question}
+- 正确参考知识集合：{correct_source}
+- 模型回复：{model_response}
+
+请严格按照上述规范对模型回复与正确参考知识的相关性进行判定，并以JSON格式输出结果。"""
 

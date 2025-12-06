@@ -314,6 +314,13 @@ def parse_response_analysis(response: str) -> Optional[ResponseAnalysisResult]:
         judgment_type = string_values[0] if len(string_values) > 0 else ""
         reason = string_values[1] if len(string_values) > 1 else None
         
+        # Remove number prefix from judgment_type (e.g., "1. Fully Correct" -> "Fully Correct")
+        if judgment_type:
+            # Remove patterns like "1.", "2.", "3.", etc. at the start
+            judgment_type = re.sub(r'^\d+\.\s*', '', judgment_type.strip())
+            # Also handle patterns like "1.Fully Correct" (no space after dot)
+            judgment_type = re.sub(r'^\d+\.', '', judgment_type.strip())
+        
         if is_correct is not None and judgment_type:
             return ResponseAnalysisResult(
                 is_response_correct=is_correct,
