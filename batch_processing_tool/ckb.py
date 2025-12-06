@@ -85,7 +85,6 @@ class CkbClient:
             try:
                 async with session.post(self.add_url, data=json.dumps(request_data), headers=headers) as response_data:
                     response_data = await response_data.text()
-                    print(response_data)
                     response_json_data = json.loads(response_data)
 
                     code = response_json_data.get("code")
@@ -161,11 +160,12 @@ class CkbClient:
                 return False, e
 
     async def get_auth_app(self):
-        self.user_id, self.tenant_id, self.cookie_session = await login_knowledge()
+        success, self.user_id, self.tenant_id, self.cookie_session, error_code = await login_knowledge()
 
-        if not self.cookie_session:
-            logger.error("Failed to get cookie, skipping subsequent steps")
-            return False, None
+        if not success or not self.cookie_session:
+            error_msg = f"Failed to login: {error_code.code if error_code else 'Unknown'} - {error_code.message if error_code else 'Unknown error'}"
+            logger.error(error_msg)
+            return False, error_msg
 
         res, public_key = await self.ckb_add(self.cookie_session, self.tenant_id)
         if not res:
@@ -194,7 +194,7 @@ class CkbClient:
                 url = self.get_answer_url + request_id
                 async with session.get(url, headers=headers) as response_data:
                     response_data = await response_data.text()
-                    logger.info(f"------ {response_data}")
+                    logger.debug(f"------ {response_data[:200]}...")
                     response_json_data = json.loads(response_data)
                     code = response_json_data.get("code")
 
@@ -261,7 +261,7 @@ class CkbClient:
     async def ckb_qa(self, question, session_id):
         """Query Spark Knowledge Base with a question"""
         self.get_url(session_id, intranet=False)
-        logger.info(f"Spark Knowledge Base request URL: {self.qa_url}")
+        logger.debug(f"Spark Knowledge Base request URL: {self.qa_url}")
        
         # WebSocket connection: if using wss:// (external network), SSL context is required
         if self.qa_url.startswith('wss://'):
@@ -306,8 +306,7 @@ class CkbClient:
                 }
 
                 # Debug: print sent data
-                logger.info(f"WebSocket data sent: {json.dumps(data, ensure_ascii=False, indent=2)}")
-
+                logger.debug(f"WebSocket data sent: {json.dumps(data, ensure_ascii=False, indent=2)}")
                 await self.send(data)
                 response_temp = await self.recv()
 
@@ -317,8 +316,8 @@ class CkbClient:
         """Send data through WebSocket"""
         self.start_time = time.time()
         data = json.dumps(data, ensure_ascii=False)
+        logger.debug(f"Spark Knowledge Base request sent: {data[:200]}...")
         await self.ws.send_str(data)
-        logger.info(f"Spark Knowledge Base request sent: {data[:200]}...")
 
     async def recv(self):
         """Receive response from WebSocket"""
@@ -328,7 +327,7 @@ class CkbClient:
             while True:
                 origin_response = await asyncio.wait_for(self.ws.receive_str(), timeout=180)
                 self.response_temp = json.loads(origin_response)
-                logger.info(f"Response frame: {json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
+                logger.debug(f"Response frame: {json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
                 status = self.response_temp["header"]["status"]
                 if status == 3:
                     continue

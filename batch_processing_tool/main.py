@@ -71,20 +71,29 @@ async def process_conversation_group(
             
             # Get retrieval results
             success, _, retrieval_list = await ckb_client.get_result(request_id)
+            retrieval_count = 0
             if success and retrieval_list:
                 # Limit to knowledge_num sources
                 max_sources = min(len(retrieval_list), config_manager.mission.knowledge_num)
                 task.set_sources(retrieval_list[:max_sources])
+                retrieval_count = len(retrieval_list[:max_sources])
             
             # Set results
             task.set_model_response(response)
             task.set_request_id(request_id)
             task.set_session_id(session_id)
             
+            # Log processing information
+            response_preview = response[:100] if response else "No response"
             if group.conversation_id:
                 logger.info(f"Successfully processed multi-turn Q{task_idx}/{len(tasks)}: {task.question[:50]}...")
             else:
                 logger.info(f"Successfully processed single-turn question: {task.question[:50]}...")
+            
+            # Log detailed information: question, response preview, retrieval count
+            logger.info(f"Question: {task.question}")
+            logger.info(f"Response (first 100 chars): {response_preview}")
+            logger.info(f"Retrieval count: {retrieval_count}")
             
         except Exception as e:
             logger.error(f"Error processing question '{task.question}': {e}", exc_info=True)
@@ -132,6 +141,7 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     ckb_client = CkbClient(intranet=False)
     
     # Get initial authentication
+    logger.info("Getting initial authentication")
     res, auth_app = await ckb_client.get_auth_app()
     if not res:
         logger.error(f"Failed to get initial auth_app: {auth_app}")
