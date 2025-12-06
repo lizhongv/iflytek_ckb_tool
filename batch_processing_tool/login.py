@@ -18,13 +18,13 @@ from config import config_manager, logger
 
 class LoginManager:
     def __init__(self):
-        # 加载配置文件
-        self.uap_ip = config_manager.uap_ip
-        self.uap_port = config_manager.uap_port
-        self.ckb_ip = config_manager.ckb_ip
-        self.ckb_port = config_manager.ckb_port
-        self.login_name = config_manager.login_name
-        self.password = config_manager.password
+        # Load configuration
+        self.uap_ip = config_manager.server.uap_ip
+        self.uap_port = config_manager.server.uap_port
+        self.ckb_ip = config_manager.server.ckb_ip
+        self.ckb_port = config_manager.server.ckb_port
+        self.login_name = config_manager.server.login_name
+        self.password = config_manager.server.password
         # 运行时变量
         self.session = None
         self.publickey = None

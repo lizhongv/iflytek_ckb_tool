@@ -1,223 +1,207 @@
 """
-初始化日志模块
-初始化配置文件
+Configuration management module
+Unified configuration management using dataclass for type safety
 """
 
-import logging.config
-import toml
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+from pathlib import Path
+import yaml
 import sys
+import os
+
+# Add project root to path for importing conf.logging
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from conf.logging import logger
 
 
-def log_dict():
-    # 日志配置字典
-    logging_dic = {
-        'version': 1.0,
-        'disable_existing_loggers': False,
-        # 日志格式
-        'formatters': {
-            'standard': {
-                'format': '[%(asctime)s] | [%(threadName)s:%(thread)d] | [%(name)s] | [%(levelname)s] | [%(pathname)s:%(lineno)d] - %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
-            },
-            'simple': {
-                'format': '%(asctime)s [%(name)s] %(levelname)s %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
-            },
-            'test': {
-                'format': '%(asctime)s %(message)s',
-            },
-        },
-        'filters': {},
-        # 日志处理器
-        'handlers': {
-            'console_debug_handler': {
-                'level': 'INFO',  # 日志处理的级别限制
-                'class': 'logging.StreamHandler',  # 输出到终端
-                'formatter': 'standard'  # 日志格式
-            },
-            'file_info_handler': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',  # 保存到文件，日志轮转
-                'filename': 'log/app.log',
-                'maxBytes': 1024 * 1024 * 10,  # 日志大小 10M
-                'backupCount': 10000,  # 日志文件保存数量限制
-                'encoding': 'utf-8',
-                'formatter': 'standard',
-            },
-        },
-        # 日志记录器
-        'loggers': {
-            'test_logger': {  # 导入时logging.getLogger时使用的app_name
-                'handlers': ['console_debug_handler', 'file_info_handler'],  # 日志分配到哪个handlers中
-                'level': 'DEBUG',  # 日志记录的级别限制
-                'propagate': False,  # 默认为True，向上（更高级别的logger）传递，设置为False即可，否则会一份日志向上层层传递
-            },
-        }
-    }
-    logging.config.dictConfig(logging_dic)
-    return logging.getLogger("test_logger")
+@dataclass
+class ServerConfig:
+    """Server configuration"""
+    ckb_ip: str
+    ckb_port: int
+    uap_ip: str
+    uap_port: int
+    login_name: str
+    password: str
+    app_code: str = "spark_knowledge_base"
 
 
-logger = log_dict()
+@dataclass
+class EffectConfig:
+    """Model effect configuration"""
+    qa_model: str
+    embed_model: str
+    embedding_top: int = 5
+    es_top: int = 5
+    qa_threshold_score: str = "0.9"
+    threshold_score: str = "0.001"
+    spark_enable: bool = True
+    dialogue_top: int = 5
+    qa_top: int = 1
+    dblist: List[Dict[str, int]] = field(default_factory=list)
+    category: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MissionConfig:
+    """Mission configuration"""
+    check_answer_by_llm: Optional[str] = None
+    check_source_by_rule: bool = False
+    thread_num: int = 1
+    input_file: str = ""
+    output_file: str = ""
+    knowledge_num: int = 10
+    auth_refresh_interval: int = 10  # Refresh auth every N records (0 to disable)
+    auth_refresh_time_minutes: int = 30  # Refresh auth every N minutes (0 to disable)
+
+
+@dataclass
+class SparkConfig:
+    """Spark model configuration"""
+    spark_url: str
+    app_id: str
+    key: str
+    secret: str
+    domain: str
+
+
+@dataclass
+class PromptConfig:
+    """Prompt configuration"""
+    prompt: str = ""
 
 
 class ConfigManager:
-    """统一的配置管理类"""
-
-    def __init__(self, config_file='app.toml'):
-        self._config = toml.load(config_file)
-        self._logger = logger
-
-    @property
-    def server(self):
-        return self._config.get("server")
-
-    @property
-    def effect(self):
-        return self._config.get("effect")
-
-    @property
-    def mongo(self):
-        return self._config.get("mongo")
-
-    @property
-    def mission(self):
-        return self._config.get("mission")
-
-    @property
-    def spark(self):
-        return self._config.get("spark")
-
-    # UAP相关配置的快捷访问方法
-    @property
-    def uap_ip(self):
-        return self.server.get("uap_ip")
-
-    @property
-    def uap_port(self):
-        return self.server.get("uap_port")
-
-    @property
-    def login_name(self):
-        return self.server.get("login_name", "ckbAdmin")
-
-    @property
-    def password(self):
-        return self.server.get("password")
-
-    @property
-    def app_code(self):
-        return self.server.get("app_code", "spark_knowledge_base")
-
-    # 知识库相关配置的快捷访问方法
-    @property
-    def ckb_ip(self):
-        return self.server.get("ckb_ip")
-
-    @property
-    def ckb_port(self):
-        return self.server.get("ckb_port")
-
-    @property
-    def ckb_model(self):
-        return self.effect.get("qa_model")
-
-    @property
-    def ckb_embed_model(self):
-        return self.effect.get("embed_model")
-
-    @property
-    def ckb_db_list(self):
-        return self.effect.get("dblist")
-
-    # Minio相关配置的快捷访问方法
-    @property
-    def ckb_category(self):
-        return self.effect.get("category")
-
-    @property
-    def ckb_embedding_top(self):
-        return self.effect.get("embeddingTop", 5)
-
-    @property
-    def ckb_es_top(self):
-        return self.effect.get("esTop", 5)
-
-    @property
-    def ckb_qa_threshold_score(self):
-        return self.effect.get("qaThresholdScore", 0.1)
-
-    @property
-    def ckb_threshold_score(self):
-        return self.effect.get("thresholdScore", 0.1)
-
-    @property
-    def ckb_qa_enable(self):
-        return self.mission.get("ckb_qa_enable", False)
-
-    @property
-    def ckb_spark_enable(self):
-        return self.effect.get("sparkEnable", False)
-
-    @property
-    def ckb_dialogue_top(self):
-        return self.effect.get("dialogueTop", 5)
-
-    @property
-    def ckb_qa_top(self):
-        return self.effect.get("qaTop", 1)
-
-    @property
-    def check_answer_by_llm(self):
-        return self.mission.get("check_answer_by_llm")
-
-    @property
-    def check_source_by_rule(self):
-        return self.mission.get("check_source_by_rule")
-
-    @property
-    def thread_num(self):
-        return self.mission.get("thread_num", 1)
-
-    @property
-    def input_file(self):
-        return self.mission.get("input_file")
-
-    @property
-    def output_file(self):
-        return self.mission.get("output_file")
-
-    @property
-    def spark_url(self):
-        return self.spark.get("spark_url")
-
-    @property
-    def app_id(self):
-        return self.spark.get("app_id")
-
-    @property
-    def key(self):
-        return self.spark.get("key")
-
-    @property
-    def secret(self):
-        return self.spark.get("secret")
-
-    @property
-    def domain(self):
-        return self.spark.get("domain")
-
-    @property
-    def prompt(self):
-        return self.spark.get("prompt")
-
-    @property
-    def knowledge_num(self):
-        if self.mission.get("knowledge_num") > 10 or self.mission.get("knowledge_num") < 1:
-            logger.error(f"0 < 检索个数0 <= 1，当前为{self.mission.get('knowledge_num')}")
-            exit()
-        return self.mission.get("knowledge_num")
+    """Unified configuration manager"""
+    
+    def __init__(self, config_file: Optional[str] = None):
+        """Initialize configuration manager from YAML file"""
+        if config_file is None:
+            # Try to find batch_config.yaml or app.toml in current directory or parent directory
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            
+            # Prefer YAML config file
+            config_file = 'batch_config.yaml'
+            if not os.path.exists(config_file):
+                parent_config = os.path.join(parent_dir, config_file)
+                if os.path.exists(parent_config):
+                    config_file = parent_config
+                else:
+                    # Fallback to app.toml for backward compatibility
+                    config_file = 'app.toml'
+                    if not os.path.exists(config_file):
+                        parent_config = os.path.join(parent_dir, config_file)
+                        if os.path.exists(parent_config):
+                            config_file = parent_config
+        
+        self.config_path = Path(config_file)
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_file}")
+        
+        self._load_config()
+        self._validate()
+        logger.info(f"Configuration loaded: {config_file}")
+    
+    def _load_config(self):
+        """Load configuration from YAML or TOML file"""
+        try:
+            if self.config_path.suffix.lower() == '.yaml' or self.config_path.suffix.lower() == '.yml':
+                # Load YAML file
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+            else:
+                # Fallback to TOML for backward compatibility
+                import toml
+                config = toml.load(self.config_path)
+            
+            # Load server configuration
+            server_data = config.get("server", {})
+            self.server = ServerConfig(
+                ckb_ip=server_data.get("ckb_ip", ""),
+                ckb_port=server_data.get("ckb_port", 8086),
+                uap_ip=server_data.get("uap_ip", ""),
+                uap_port=server_data.get("uap_port", 8086),
+                login_name=server_data.get("login_name", "ckbAdmin"),
+                password=server_data.get("password", ""),
+                app_code=server_data.get("app_code", "spark_knowledge_base")
+            )
+            
+            # Load effect configuration
+            effect_data = config.get("effect", {})
+            # Handle dblist format: YAML uses libId, TOML might use libId
+            dblist = effect_data.get("dblist", [])
+            # Convert YAML format to expected format if needed
+            if dblist and isinstance(dblist, list) and len(dblist) > 0 and isinstance(dblist[0], dict):
+                # YAML format: [{libId: "...", version: 1}]
+                dblist = [{"libId": item.get("libId") or item.get("lib_id"), "version": item.get("version")} for item in dblist if item]
+            
+            self.effect = EffectConfig(
+                qa_model=effect_data.get("qa_model", "Spark13B"),
+                embed_model=effect_data.get("embed_model", "xhdmx1"),
+                embedding_top=effect_data.get("embeddingTop", 5),
+                es_top=effect_data.get("esTop", 5),
+                qa_threshold_score=str(effect_data.get("qaThresholdScore", "0.9")),
+                threshold_score=str(effect_data.get("thresholdScore", "0.001")),
+                spark_enable=effect_data.get("sparkEnable", True),
+                dialogue_top=effect_data.get("dialogueTop", 5),
+                qa_top=effect_data.get("qaTop", 1),
+                dblist=dblist,
+                category=effect_data.get("category", [])
+            )
+            
+            # Load mission configuration
+            mission_data = config.get("mission", {})
+            self.mission = MissionConfig(
+                check_answer_by_llm=mission_data.get("check_answer_by_llm"),
+                check_source_by_rule=mission_data.get("check_source_by_rule", False),
+                thread_num=mission_data.get("thread_num", 1),
+                input_file=mission_data.get("input_file", ""),
+                output_file=mission_data.get("output_file", ""),
+                knowledge_num=mission_data.get("knowledge_num", 10),
+                auth_refresh_interval=mission_data.get("auth_refresh_interval", 10),
+                auth_refresh_time_minutes=mission_data.get("auth_refresh_time_minutes", 30)
+            )
+            
+            # Load spark configuration
+            spark_data = config.get("spark", {})
+            self.spark = SparkConfig(
+                spark_url=spark_data.get("spark_url", ""),
+                app_id=spark_data.get("app_id", ""),
+                key=spark_data.get("key", ""),
+                secret=spark_data.get("secret", ""),
+                domain=spark_data.get("domain", "")
+            )
+            
+            # Load prompt configuration
+            prompt_data = config.get("prompt", {})
+            if not prompt_data:
+                # Fallback to spark section for prompt (backward compatibility)
+                prompt_data = {"prompt": config.get("spark", {}).get("prompt", "")}
+            
+            self._prompt = PromptConfig(
+                prompt=prompt_data.get("prompt", "")
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to load configuration: {e}")
+            raise
+    
+    def _validate(self):
+        """Validate configuration"""
+        # Validate knowledge_num
+        if not (1 <= self.mission.knowledge_num <= 50):
+            raise ValueError(
+                f"knowledge_num must be between 1 and 50, current: {self.mission.knowledge_num}"
+            )
+        
+        logger.info("Configuration validation passed")
 
 
-# 创建全局配置管理实例
+# Create global configuration manager instance
 config_manager = ConfigManager()

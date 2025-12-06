@@ -18,6 +18,7 @@ from data_analysis_tools.models import (
 )
 from data_analysis_tools.analyzers import ProblemAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
 from conf.settings import logger
+from conf.error_codes import ErrorCode
 
 
 @dataclass
@@ -86,7 +87,8 @@ class ProblemAnalysisExecutor:
             
         except Exception as e:
             result.success = False
-            result.error = f"Problem-side analysis failed: {str(e)}"
+            error_msg = f"[{ErrorCode.ANALYSIS_PROBLEM_FAILED.code}] {ErrorCode.ANALYSIS_PROBLEM_FAILED.message}: {str(e)}"
+            result.error = error_msg
             logger.error(f"  Problem-side analysis failed (row {row_index + 1}): {e}", exc_info=True)
         
         return result
@@ -181,7 +183,8 @@ class RecallAnalysisExecutor:
             
         except Exception as e:
             result.success = False
-            result.error = f"Recall-side analysis failed: {str(e)}"
+            error_msg = f"[{ErrorCode.ANALYSIS_RECALL_FAILED.code}] {ErrorCode.ANALYSIS_RECALL_FAILED.message}: {str(e)}"
+            result.error = error_msg
             logger.error(f"  Recall-side analysis failed (row {row_index + 1}): {e}", exc_info=True)
         
         return result
@@ -246,13 +249,15 @@ class ResponseAnalysisExecutor:
                 if response_result:
                     result.response_analysis = response_result
                 else:
-                    logger.warning(f"  Skipping response-side analysis (row {row_index + 1}): missing required fields")
+                    error_msg = f"[{ErrorCode.ANALYSIS_MISSING_FIELDS.code}] {ErrorCode.ANALYSIS_MISSING_FIELDS.message}"
+                    logger.warning(f"  Skipping response-side analysis (row {row_index + 1}): {error_msg}")
             
             logger.info(f"  Response-side analysis completed (row {row_index + 1})")
             
         except Exception as e:
             result.success = False
-            result.error = f"Response-side analysis failed: {str(e)}"
+            error_msg = f"[{ErrorCode.ANALYSIS_RESPONSE_FAILED.code}] {ErrorCode.ANALYSIS_RESPONSE_FAILED.message}: {str(e)}"
+            result.error = error_msg
             logger.error(f"  Response-side analysis failed (row {row_index + 1}): {e}", exc_info=True)
         
         return result

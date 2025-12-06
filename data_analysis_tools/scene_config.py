@@ -13,6 +13,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from conf.settings import logger
+from conf.error_codes import ErrorCode
 
 
 class SceneConfigLoader:
@@ -51,7 +52,7 @@ class SceneConfigLoader:
                 missing_columns.append(business_type_col)
             
             if missing_columns:
-                error_msg = f"Scene config file '{file_path}' is missing required columns: {', '.join(missing_columns)}. Please provide these columns in the file."
+                error_msg = f"[{ErrorCode.DATA_MISSING_COLUMNS.code}] {ErrorCode.DATA_MISSING_COLUMNS.message}: Scene config file '{file_path}' is missing required columns: {', '.join(missing_columns)}"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
             
@@ -84,7 +85,8 @@ class SceneConfigLoader:
             return scenario, business_types
         
         except Exception as e:
-            logger.error(f"Failed to load scene config file: {e}")
+            error_msg = f"[{ErrorCode.CONFIG_SCENE_LOAD_FAILED.code}] {ErrorCode.CONFIG_SCENE_LOAD_FAILED.message}: {str(e)}"
+            logger.error(error_msg)
             return "", []
     
     @staticmethod

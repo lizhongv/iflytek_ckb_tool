@@ -68,7 +68,7 @@ class ConversationTask:
     def to_dict(self) -> Dict:
         """Convert to dictionary for Excel output"""
         # Get max sources count from config
-        max_sources = config_manager.knowledge_num
+        max_sources = config_manager.mission.knowledge_num
         
         result = {
             '对话ID': self.conversation_id if self.conversation_id else '',
@@ -165,7 +165,7 @@ class ExcelHandler:
         
         # Find column names
         conv_id_col = self._find_column(['对话ID', 'conversation_id', 'conversationId', '对话id'])
-        question_col = self._find_column(['用户问题', '问题', 'question', 'query', '用户问题'])
+        question_col = self._find_column(['用户问题', '问题', 'question', 'query'])
         correct_answer_col = self._find_column(['参考答案', '正确答案', 'correct_answer', 'answer'])
         correct_source_col = self._find_column(['参考溯源', '正确溯源', 'correct_source', 'source'])
         
@@ -267,7 +267,7 @@ class ExcelHandler:
         df = pd.DataFrame(result_data)
         
         # Get max sources count from config
-        max_sources = config_manager.knowledge_num
+        max_sources = config_manager.mission.knowledge_num
         
         # Define column order (dynamic based on config)
         base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
@@ -378,7 +378,7 @@ def save_result(path: str, groups: Optional[List[ConversationGroup]] = None):
     else:
         # Use old method for backward compatibility
         # Get max sources count from config
-        max_sources = config_manager.knowledge_num
+        max_sources = config_manager.mission.knowledge_num
         source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
         
         columns = ['用户问题', '参考溯源', '参考答案'] + source_columns + [

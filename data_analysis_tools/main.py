@@ -45,6 +45,7 @@ from data_analysis_tools.analysis_executors import (
     AnalysisTaskResult
 )
 from conf.settings import logger
+from conf.error_codes import ErrorCode, create_response, get_success_response
 
 
 class DataAnalysisTool:
@@ -68,10 +69,12 @@ class DataAnalysisTool:
                 scenario, business_types = SceneConfigLoader.load_scene_config(config.scene_config_file)
             except ValueError as e:
                 # Re-raise ValueError with clear error message for missing columns or empty values
-                logger.error(str(e))
-                raise
+                error_msg = f"[{ErrorCode.CONFIG_SCENE_LOAD_FAILED.code}] {ErrorCode.CONFIG_SCENE_LOAD_FAILED.message}: {str(e)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
             except Exception as e:
-                logger.error(f"Failed to load scene config from {config.scene_config_file}: {e}")
+                error_msg = f"[{ErrorCode.CONFIG_SCENE_LOAD_FAILED.code}] {ErrorCode.CONFIG_SCENE_LOAD_FAILED.message}: {str(e)}"
+                logger.error(error_msg)
                 raise
         
         # Initialize analyzers based on config
@@ -246,7 +249,8 @@ class DataAnalysisTool:
             # Merge results
             for task_name, task_result in zip(task_names, task_results):
                 if isinstance(task_result, Exception):
-                    logger.error(f"{task_name} analysis task failed: {task_result}", exc_info=True)
+                    error_msg = f"[{ErrorCode.ANALYSIS_TASK_FAILED.code}] {ErrorCode.ANALYSIS_TASK_FAILED.message}: {task_name}"
+                    logger.error(f"{error_msg}: {task_result}", exc_info=True)
                     continue
                 
                 # Merge analysis results from each module into final results
@@ -373,93 +377,145 @@ class DataAnalysisTool:
         return results
 
 
-async def main():
-    """Main function"""
+async def main() -> dict:
+    """
+    Main function
+    
+    Returns:
+        Response dictionary with code and message
+    """
     import sys
     import json
     from data_analysis_tools.config import AnalysisConfig
     
-    # Parse command line arguments or use default config
-    if len(sys.argv) > 1:
-        # If JSON config file provided
-        if sys.argv[1].endswith('.json'):
-            try:
-                with open(sys.argv[1], 'r', encoding='utf-8') as f:
-                    config_dict = json.load(f)
-                config = AnalysisConfig(**config_dict)
-            except Exception as e:
-                logger.error(f"Failed to load config file: {e}")
-                return
+    try:
+        # Parse command line arguments or use default config
+        if len(sys.argv) > 1:
+            # If JSON config file provided
+            if sys.argv[1].endswith('.json'):
+                try:
+                    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+                        config_dict = json.load(f)
+                    config = AnalysisConfig(**config_dict)
+                except FileNotFoundError:
+                    logger.error(f"Config file not found: {sys.argv[1]}")
+                    return create_response(False, ErrorCode.FILE_NOT_FOUND, sys.argv[1])
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in config file: {e}")
+                    return create_response(False, ErrorCode.FILE_PARSE_ERROR, f"JSON decode error: {str(e)}")
+                except Exception as e:
+                    error_msg = f"[{ErrorCode.CONFIG_JSON_LOAD_FAILED.code}] {ErrorCode.CONFIG_JSON_LOAD_FAILED.message}: {str(e)}"
+                    logger.error(error_msg)
+                    return create_response(False, ErrorCode.CONFIG_JSON_LOAD_FAILED, str(e))
+            else:
+                # If file path provided, create minimal config
+                config = AnalysisConfig(
+                    query_selected=True,
+                    file_path=sys.argv[1],
+                    problem_analysis=True,
+                    norm_analysis=True,
+                    set_analysis=True,
+                    recall_analysis=True,
+                    reply_analysis=True,
+                    parallel_execution=True  # Default to parallel execution
+                )
         else:
-            # If file path provided, create minimal config
+            # Default configuration
             config = AnalysisConfig(
                 query_selected=True,
-                file_path=sys.argv[1],
+                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\batch_data.xlsx",
+                chunk_selected=True,
+                answer_selected=True,
                 problem_analysis=True,
                 norm_analysis=True,
                 set_analysis=True,
                 recall_analysis=True,
                 reply_analysis=True,
+                scene_config_file=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\scene_config.xlsx",
                 parallel_execution=True  # Default to parallel execution
             )
-    else:
-        # Default configuration
-        config = AnalysisConfig(
-            query_selected=True,
-            file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\batch_data.xlsx",
-            chunk_selected=True,
-            answer_selected=True,
-            problem_analysis=True,
-            norm_analysis=True,
-            set_analysis=True,
-            recall_analysis=True,
-            reply_analysis=True,
-            scene_config_file=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\scene_config.xlsx",
-            parallel_execution=True  # Default to parallel execution
-        )
-    
-    # Validate configuration
-    is_valid, error_msg = config.validate()
-    if not is_valid:
-        logger.error(f"Configuration validation failed: {error_msg}")
-        return
-    
-    logger.info(f"Starting data analysis, input file: {config.file_path}")
-    enabled = config.get_enabled_analyses()
-    logger.info(f"Enabled modules: {[k for k, v in enabled.items() if v]}")
-    
-    try:
+        
+        # Validate configuration
+        is_valid, error_msg = config.validate()
+        if not is_valid:
+            logger.error(f"Configuration validation failed: {error_msg}")
+            # Map validation errors to specific error codes
+            if "querySelected" in error_msg:
+                return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
+            elif "file_path" in error_msg:
+                return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
+            elif "norm_analysis" in error_msg:
+                return create_response(False, ErrorCode.CONFIG_NORM_REQUIRES_PROBLEM)
+            elif "set_analysis" in error_msg and "problem_analysis" in error_msg:
+                return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_PROBLEM)
+            elif "scene_config_file" in error_msg:
+                return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_SCENE)
+            else:
+                return create_response(False, ErrorCode.CONFIG_INVALID, error_msg)
+
+        
+        logger.info(f"Starting data analysis, input file: {config.file_path}")
+        enabled = config.get_enabled_analyses()
+        logger.info(f"Enabled modules: {[k for k, v in enabled.items() if v]}")
+        
         # 1. Read Excel data
-        excel_handler = ExcelHandler(config.file_path)
-        inputs = excel_handler.read_data(
-            chunk_selected=config.chunk_selected,
-            answer_selected=config.answer_selected
-        )
+        try:
+            excel_handler = ExcelHandler(config.file_path)
+            inputs = excel_handler.read_data(
+                chunk_selected=config.chunk_selected,
+                answer_selected=config.answer_selected
+            )
+        except FileNotFoundError:
+            logger.error(f"Input file not found: {config.file_path}")
+            return create_response(False, ErrorCode.FILE_NOT_FOUND, config.file_path)
+        except Exception as e:
+            logger.error(f"Failed to read input file: {e}")
+            return create_response(False, ErrorCode.FILE_READ_ERROR, str(e))
         
         if not inputs:
             logger.warning("No valid data read")
-            return
+            return create_response(False, ErrorCode.DATA_NO_VALID_RECORDS)
         
         # 2. Create analysis tool with config
-        tool = DataAnalysisTool(config)
+        try:
+            tool = DataAnalysisTool(config)
+        except Exception as e:
+            logger.error(f"Failed to initialize analysis tool: {e}", exc_info=True)
+            return create_response(False, ErrorCode.SYSTEM_EXCEPTION, f"Tool initialization: {str(e)}")
         
         # 3. Execute analysis
-        if config.parallel_execution:
-            logger.info("Using parallel execution mode")
-            results = await tool.analyze_parallel(inputs)
-        else:
-            logger.info("Using sequential execution mode")
-            results = tool.analyze(inputs)
+        try:
+            if config.parallel_execution:
+                logger.info("Using parallel execution mode")
+                results = await tool.analyze_parallel(inputs)
+            else:
+                logger.info("Using sequential execution mode")
+                results = tool.analyze(inputs)
+        except Exception as e:
+            logger.error(f"Analysis execution failed: {e}", exc_info=True)
+            return create_response(False, ErrorCode.ANALYSIS_TASK_FAILED, str(e))
         
         # 4. Save results
-        excel_handler.write_results(results)
+        try:
+            excel_handler.write_results(results)
+        except PermissionError:
+            logger.error("File is locked by another program")
+            return create_response(False, ErrorCode.FILE_LOCKED)
+        except Exception as e:
+            logger.error(f"Failed to save results: {e}")
+            return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
         
-        logger.info("Data analysis completed!")
+        logger.info(f"Data analysis completed successfully!")
+        return create_response(True, success_code=ErrorCode.SUCCESS_ANALYSIS)
         
     except Exception as e:
-        logger.error(f"Data analysis failed: {e}", exc_info=True)
-        raise
+        logger.error(f"Data analysis failed with unexpected error: {e}", exc_info=True)
+        return create_response(False, ErrorCode.SYSTEM_EXCEPTION, str(e))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    result = asyncio.run(main())
+    if result:
+        print(f"Code: {result['code']}, Message: {result['message']}")
+        if not result.get('success'):
+            exit(1)

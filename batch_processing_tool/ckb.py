@@ -10,6 +10,16 @@ import ssl
 
 from config import logger, config_manager
 from login import login_knowledge
+import sys
+import os
+
+# Add project root to path for importing conf modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from conf.error_codes import ErrorCode
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -25,17 +35,17 @@ class CkbClient:
     def __init__(self, intranet: bool = True):
         self.intranet = intranet
         if intranet:
-            self.add_url = f"http://{config_manager.ckb_ip}:{config_manager.ckb_port}/ckb/app/add"
-            self.login_url = f"http://{config_manager.ckb_ip}:{config_manager.ckb_port}/ckb/app/login"
-            self.save_url = f"http://{config_manager.ckb_ip}:{config_manager.ckb_port}/ckb/spark-knowledge/openapi/v1/session/save"
-            self.get_answer_url = f"http://{config_manager.ckb_ip}:{config_manager.ckb_port}/ckb/spark-knowledge/v1/qalog/"
+            self.add_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/app/add"
+            self.login_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/app/login"
+            self.save_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/spark-knowledge/openapi/v1/session/save"
+            self.get_answer_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/spark-knowledge/v1/qalog/"
         else:
             self.add_url = f"https://ssc.mohrss.gov.cn/ckb/app/add"
             self.login_url = f"https://ssc.mohrss.gov.cn/ckb/app/login"
             self.save_url = f"https://ssc.mohrss.gov.cn/ckb/spark-knowledge/openapi/v1/session/save"
             self.get_answer_url = f"https://ssc.mohrss.gov.cn/ckb/spark-knowledge/v1/qalog/"
 
-        self.add_app_name = "ckb" + str(time.time())
+        self.add_app_name = "ckb_" + str(time.time())
         logger.info(f"New app name: {self.add_app_name}")
         
         self.DEFAULT_TRANSFORMATION = padding.OAEP(
@@ -113,7 +123,7 @@ class CkbClient:
     def get_pwd(self, public_key):
         data = {
             "appCode": self.add_app_name,
-            "loginName": config_manager.login_name
+            "loginName": config_manager.server.login_name
         }
         string = json.dumps(data, ensure_ascii=False, indent=4)
         string = self.encrypt(string, public_key)
@@ -213,9 +223,10 @@ class CkbClient:
                             response = process["response"]
                 return True, response, retrieval_list[:10]
         except Exception as e:
+            error_msg = f"[{ErrorCode.CKB_GET_ANSWER_FAILED.code}] {ErrorCode.CKB_GET_ANSWER_FAILED.message}: {str(e)}"
             logger.error(f"Spark Knowledge Base get_answer failed, error: {e}")
-            retrieval_list.append(e)
-            return False, e, retrieval_list
+            retrieval_list.append(str(e))
+            return False, error_msg, retrieval_list
 
     async def save_session(self, session_id):
         headers = {
@@ -225,7 +236,7 @@ class CkbClient:
             "sessionId": session_id,
             "dbList": [],
             "title": "Test",
-            "model": config_manager.ckb_model
+            "model": config_manager.effect.qa_model
         }
 
         async with self._get_session() as session:
@@ -243,9 +254,9 @@ class CkbClient:
 
     def get_url(self, session_id, intranet: bool = True):
         if intranet:
-            self.qa_url = f"ws://{config_manager.ckb_ip}:{config_manager.ckb_port}/spark-knowledge/sparkRequest?loginName={config_manager.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
+            self.qa_url = f"ws://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/spark-knowledge/sparkRequest?loginName={config_manager.server.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
         else:
-            self.qa_url = f"wss://ssc.mohrss.gov.cn/spark-knowledge/sparkRequest?loginName={config_manager.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
+            self.qa_url = f"wss://ssc.mohrss.gov.cn/spark-knowledge/sparkRequest?loginName={config_manager.server.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
 
     async def ckb_qa(self, question, session_id):
         """Query Spark Knowledge Base with a question"""
@@ -273,20 +284,20 @@ class CkbClient:
                         "userId": self.user_id,
                         "type": "answer",
                         "id": request_id,
-                        "dbList": config_manager.ckb_db_list,
-                        "categoryId": config_manager.ckb_category,
+                        "dbList": config_manager.effect.dblist,
+                        "categoryId": config_manager.effect.category,
                         "docId": [],
                         "info": True,
-                        "embeddingTop": config_manager.ckb_embedding_top,
-                        "esTop": config_manager.ckb_es_top,
-                        "qaThresholdScore": config_manager.ckb_qa_threshold_score,
-                        "thresholdScore": config_manager.ckb_threshold_score,
-                        "sparkConfig": {"id": config_manager.ckb_embed_model},
-                        "sparkEnable": config_manager.ckb_spark_enable,
-                        "dialogueTop": config_manager.ckb_dialogue_top,
-                        "qaTop": config_manager.ckb_qa_top,
+                        "embeddingTop": config_manager.effect.embedding_top,
+                        "esTop": config_manager.effect.es_top,
+                        "qaThresholdScore": float(config_manager.effect.qa_threshold_score),
+                        "thresholdScore": float(config_manager.effect.threshold_score),
+                        "sparkConfig": {"id": config_manager.effect.embed_model},
+                        "sparkEnable": config_manager.effect.spark_enable,
+                        "dialogueTop": config_manager.effect.dialogue_top,
+                        "qaTop": config_manager.effect.qa_top,
                         "currentSpaceType": "All",
-                        "model": config_manager.ckb_model,
+                        "model": config_manager.effect.qa_model,
 
                         "knowledgeSpaceEnable": True,
                         "internetEnable": False,
@@ -346,5 +357,7 @@ class CkbClient:
                     else:
                         return response_final
         except asyncio.TimeoutError:
-            return "Timeout receiving response from knowledge base"
+            error_msg = f"[{ErrorCode.CKB_WEBSOCKET_TIMEOUT.code}] {ErrorCode.CKB_WEBSOCKET_TIMEOUT.message}"
+            logger.error(error_msg)
+            return error_msg
 

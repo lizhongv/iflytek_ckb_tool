@@ -54,6 +54,7 @@ from data_analysis_tools.parsers import (
 )
 from llm.deepseek_api import deepseek_chat
 from conf.settings import logger
+from conf.error_codes import ErrorCode
 
 
 class ProblemAnalyzer:
@@ -82,11 +83,13 @@ class ProblemAnalyzer:
             
             result = parse_problem_analysis(response)
             if not result:
-                logger.warning(f"Failed to parse problem analysis result: {response}")
+                error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
+                logger.warning(error_msg)
             
             return result
         except Exception as e:
-            logger.error(f"Problem analysis failed: {e}")
+            error_msg = f"[{ErrorCode.ANALYSIS_PROBLEM_FAILED.code}] {ErrorCode.ANALYSIS_PROBLEM_FAILED.message}: {str(e)}"
+            logger.error(error_msg)
             return None
 
 
@@ -125,11 +128,13 @@ class SetAnalyzer:
             
             result = parse_set_analysis(response)
             if not result:
-                logger.warning(f"Failed to parse set analysis result: {response}")
+                error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
+                logger.warning(error_msg)
             
             return result
         except Exception as e:
-            logger.error(f"Set analysis failed: {e}")
+            error_msg = f"[{ErrorCode.ANALYSIS_SET_FAILED.code}] {ErrorCode.ANALYSIS_SET_FAILED.message}: {str(e)}"
+            logger.error(error_msg)
             return None
 
 
@@ -249,11 +254,13 @@ class RecallAnalyzer:
             
             result = parse_recall_judgment(response)
             if not result:
-                logger.warning(f"Failed to parse retrieval judgment result: {response}")
+                error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
+                logger.warning(error_msg)
             
             return result
         except Exception as e:
-            logger.error(f"Retrieval judgment (by answer) failed: {e}")
+            error_msg = f"[{ErrorCode.ANALYSIS_RECALL_FAILED.code}] {ErrorCode.ANALYSIS_RECALL_FAILED.message}: {str(e)}"
+            logger.error(error_msg)
             return None
 
 
@@ -315,9 +322,11 @@ class ResponseAnalyzer:
                     result.response_judgment_type = answer_result.response_judgment_type
                     result.response_reason = answer_result.response_reason
                 else:
-                    logger.warning(f"Failed to parse response analysis (by answer) result: {response}")
+                    error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
+                    logger.warning(error_msg)
             except Exception as e:
-                logger.error(f"Response analysis (by answer) failed: {e}")
+                error_msg = f"[{ErrorCode.ANALYSIS_RESPONSE_FAILED.code}] {ErrorCode.ANALYSIS_RESPONSE_FAILED.message}: {str(e)}"
+                logger.error(error_msg)
         
         # Analyze with correct source if available
         if correct_source:
@@ -341,9 +350,11 @@ class ResponseAnalyzer:
                     result.response_judgment_type_by_source = source_result.response_judgment_type
                     result.response_reason_by_source = source_result.response_reason
                 else:
-                    logger.warning(f"Failed to parse response analysis (by source) result: {response}")
+                    error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
+                    logger.warning(error_msg)
             except Exception as e:
-                logger.error(f"Response analysis (by source) failed: {e}")
+                error_msg = f"[{ErrorCode.ANALYSIS_RESPONSE_FAILED.code}] {ErrorCode.ANALYSIS_RESPONSE_FAILED.message}: {str(e)}"
+                logger.error(error_msg)
         
         # Return result if at least one analysis succeeded
         if result.is_response_correct is not None or result.is_response_correct_by_source is not None:

@@ -14,6 +14,16 @@ from pathlib import Path
 from ckb import CkbClient
 from excel_io import ExcelHandler, ConversationGroup, ConversationTask
 from config import logger, config_manager
+import sys
+import os
+
+# Add project root to path for importing conf modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from conf.error_codes import ErrorCode, create_response, get_success_response
 
 
 async def process_conversation_group(
@@ -51,7 +61,7 @@ async def process_conversation_group(
             if not success or not response:
                 error_msg = f"Failed to get response for question: {task.question}"
                 logger.error(error_msg)
-                task.set_model_response(str(response) if response else "Error: No response")
+                task.set_model_response(f"Error [{ErrorCode.CKB_GET_ANSWER_FAILED.code}]: {ErrorCode.CKB_GET_ANSWER_FAILED.message}")
                 continue
             
             if group.conversation_id:
@@ -63,7 +73,7 @@ async def process_conversation_group(
             success, _, retrieval_list = await ckb_client.get_result(request_id)
             if success and retrieval_list:
                 # Limit to knowledge_num sources
-                max_sources = min(len(retrieval_list), config_manager.knowledge_num)
+                max_sources = min(len(retrieval_list), config_manager.mission.knowledge_num)
                 task.set_sources(retrieval_list[:max_sources])
             
             # Set results
@@ -78,10 +88,10 @@ async def process_conversation_group(
             
         except Exception as e:
             logger.error(f"Error processing question '{task.question}': {e}", exc_info=True)
-            task.set_model_response(f"Error: {str(e)}")
+            task.set_model_response(f"Error [{ErrorCode.PROCESS_QUESTION_FAILED.code}]: {ErrorCode.PROCESS_QUESTION_FAILED.message}: {str(e)}")
 
 
-async def refresh_auth(ckb_client: CkbClient) -> bool:
+async def refresh_auth(ckb_client: CkbClient) -> dict:
     """
     Refresh UAP authentication
     
@@ -89,20 +99,20 @@ async def refresh_auth(ckb_client: CkbClient) -> bool:
         ckb_client: CKB client instance
         
     Returns:
-        True if auth was refreshed successfully, False otherwise
+        Response dictionary with code and message
     """
     logger.info("Refreshing UAP authentication")
     try:
         res, auth_app = await ckb_client.get_auth_app()
         if res:
             logger.info("UAP authentication refreshed successfully")
-            return True
+            return create_response(True)
         else:
             logger.error(f"Failed to refresh UAP authentication: {auth_app}")
-            return False
+            return create_response(False, ErrorCode.AUTH_REFRESH_FAILED, str(auth_app))
     except Exception as e:
         logger.error(f"Error refreshing UAP authentication: {e}", exc_info=True)
-        return False
+        return create_response(False, ErrorCode.AUTH_REFRESH_FAILED, str(e))
 
 
 async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGroup]:
@@ -115,7 +125,7 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     Returns:
         List of processed conversation groups
     """
-    thread_num = config_manager.thread_num
+    thread_num = config_manager.mission.thread_num
     logger.info(f"Starting batch processing: {len(groups)} groups, {thread_num} threads")
     
     # Initialize CKB client
@@ -125,7 +135,8 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     res, auth_app = await ckb_client.get_auth_app()
     if not res:
         logger.error(f"Failed to get initial auth_app: {auth_app}")
-        return groups
+        # Continue processing but log the error
+        logger.warning("Continuing with potentially invalid authentication")
     
     logger.info("Initial UAP authentication successful")
     
@@ -138,7 +149,9 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     while remaining_groups or task_set:
         # Refresh auth periodically
         if processed_count > 0 and processed_count % refresh_interval == 0:
-            await refresh_auth(ckb_client)
+            auth_result = await refresh_auth(ckb_client)
+            if not auth_result.get("success"):
+                logger.warning(f"Auth refresh failed: {auth_result.get('message')}, continuing...")
         
         # Start new tasks
         while remaining_groups and len(task_set) < thread_num:
@@ -185,28 +198,44 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     return groups
 
 
-async def main():
-    """Main function"""
+async def main() -> dict:
+    """
+    Main function
+    
+    Returns:
+        Response dictionary with code and message
+    """
     try:
         # Read input file
-        input_file = config_manager.input_file
+        input_file = config_manager.mission.input_file
         if not input_file:
             logger.error("Input file not configured")
-            return
+            return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
         
         logger.info(f"Reading input file: {input_file}")
-        handler = ExcelHandler(input_file)
-        groups = handler.read_data()
+        try:
+            handler = ExcelHandler(input_file)
+            groups = handler.read_data()
+        except FileNotFoundError:
+            logger.error(f"File not found: {input_file}")
+            return create_response(False, ErrorCode.FILE_NOT_FOUND, input_file)
+        except Exception as e:
+            logger.error(f"Failed to read input file: {e}")
+            return create_response(False, ErrorCode.FILE_READ_ERROR, str(e))
         
         if not groups:
             logger.warning("No conversation groups found in input file")
-            return
+            return create_response(False, ErrorCode.DATA_NO_GROUPS)
         
         # Process all groups
-        processed_groups = await process_batch(groups)
+        try:
+            processed_groups = await process_batch(groups)
+        except Exception as e:
+            logger.error(f"Batch processing failed: {e}", exc_info=True)
+            return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
         
         # Generate output file path with timestamp
-        output_file = config_manager.output_file
+        output_file = config_manager.mission.output_file
         if output_file:
             output_dir = os.path.dirname(output_file) if os.path.dirname(output_file) else 'data'
             base_name = os.path.basename(output_file)
@@ -225,17 +254,37 @@ async def main():
             logger.info(f"Output file will be saved as: {output_file_with_timestamp}")
         
         # Save results to Excel
-        handler.write_results(processed_groups, output_file_with_timestamp)
+        try:
+            handler.write_results(processed_groups, output_file_with_timestamp)
+        except PermissionError:
+            logger.error("File is locked by another program")
+            return create_response(False, ErrorCode.FILE_LOCKED, output_file_with_timestamp)
+        except Exception as e:
+            logger.error(f"Failed to save Excel results: {e}")
+            return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
         
         # Save results to JSONL
-        handler.write_results_jsonl(processed_groups, output_file_with_timestamp)
+        try:
+            handler.write_results_jsonl(processed_groups, output_file_with_timestamp)
+        except PermissionError:
+            logger.error("File is locked by another program (JSONL)")
+            return create_response(False, ErrorCode.FILE_LOCKED, f"{output_file_with_timestamp}.jsonl")
+        except Exception as e:
+            logger.error(f"Failed to save JSONL results: {e}")
+            return create_response(False, ErrorCode.FILE_WRITE_ERROR, f"JSONL: {str(e)}")
         
-        logger.info("Batch processing completed successfully!")
+        code, message = get_success_response()
+        logger.info(f"Batch processing completed successfully! Code: {code}, Message: {message}")
+        return create_response(True)
         
     except Exception as e:
-        logger.error(f"Batch processing failed: {e}", exc_info=True)
-        raise
+        logger.error(f"Batch processing failed with unexpected error: {e}", exc_info=True)
+        return create_response(False, ErrorCode.SYSTEM_EXCEPTION, str(e))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    result = asyncio.run(main())
+    if result:
+        print(f"Code: {result['code']}, Message: {result['message']}")
+        if not result.get('success'):
+            exit(1)
