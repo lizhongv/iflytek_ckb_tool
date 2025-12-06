@@ -1,27 +1,19 @@
-import sys
-import os
-from pathlib import Path
-
-# 将项目根目录添加到 Python 路径中，以便可以直接运行此文件
-project_root = Path(__file__).parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
-from lib.ckb import CkbClient
-from excel_io.ckb_task import TestTask, TestTaskSet
-from excel_io.write_result import write_result, save_result
-from excel_io.read_file import excel_init
-from conf.settings import logger, config_manager
+"""
+主程序入口
+"""
+from ckb import CkbClient
+from excel_io import TestTask, TestTaskSet, write_result, save_result, excel_init
+from config import logger, config_manager
 import asyncio
 import uuid
-import datetime
+from datetime import datetime
+import os
 
 
 async def do_task(ckb_client, task_set, auth_app):
     if task_set.is_skipped():
         for task in task_set.get_task():
             write_result(task.get_row_index(), task.get_row_data())
-
         return
 
     session_id = str(uuid.uuid4())[:16]
@@ -35,9 +27,7 @@ async def do_task(ckb_client, task_set, auth_app):
             write_result(task.get_row_index(), task.get_row_data())
             return
 
-        # _, _, request_id = await ckb_client.ckb_qa(task.get_value(0), session_id)
         logger.debug(f"会话ID: {session_id} 请求ID: {request_id}")
-        # await ckb_client.save_session(session_id)
 
         _, _, retrieval_list = await ckb_client.get_result(request_id)
         for i in range(len(retrieval_list)):
@@ -67,7 +57,7 @@ async def ckb_task():
     task_set = []
     while task_list:
         if len(task_list) % 10 == 0:
-            ckb_client = CkbClient()
+            ckb_client = CkbClient(intranet=False)
             res, auth_app = await ckb_client.get_auth_app()
             if not res:
                 logger.error(f"获取auth_app失败:{auth_app},跳过后续步骤")
@@ -81,8 +71,30 @@ async def ckb_task():
         task_set = list(pending)
     if task_set:
         await asyncio.wait(task_set, timeout=180)
-    save_result(config_manager.output_file)
+    
+    # 生成带时间戳的输出文件名
+    output_file = config_manager.output_file
+    if output_file:
+        # 获取文件目录和基础文件名
+        output_dir = os.path.dirname(output_file) if os.path.dirname(output_file) else 'data'
+        base_name = os.path.basename(output_file)
+        # 分离文件名和扩展名
+        name, ext = os.path.splitext(base_name)
+        # 添加时间戳
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_file_with_timestamp = os.path.join(output_dir, f"{name}_{timestamp}{ext}")
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"输出文件将保存为: {output_file_with_timestamp}")
+        save_result(output_file_with_timestamp)
+    else:
+        save_result(config_manager.output_file)
+
+
+async def main():
+    # 问答任务
+    await ckb_task()
 
 
 if __name__ == "__main__":
-    asyncio.run(ckb_task())
+    asyncio.run(main())

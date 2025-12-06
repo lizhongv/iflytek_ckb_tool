@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from cryptography.hazmat.backends import default_backend
-from conf.settings import config_manager, logger
+from config import config_manager, logger
 
 class LoginManager:
     def __init__(self):
@@ -616,6 +616,3 @@ async def login_knowledge():
         else:
             logger.error("登录测试失败")
 
-# if __name__ == "__main__":
-#     user_id,tenant_id,cookie_session = asyncio.run(login_knowledge()) 
-#     print(user_id,tenant_id,cookie_session)

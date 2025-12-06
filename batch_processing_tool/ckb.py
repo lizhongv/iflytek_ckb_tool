@@ -3,8 +3,8 @@ import aiohttp
 import json
 import ssl
 
-from conf.settings import logger, config_manager
-from lib.login import login_knowledge
+from config import logger, config_manager
+from login import login_knowledge
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -93,29 +93,6 @@ class CkbClient:
             except Exception as e:
                 logger.error(f"uap系统获取token失败，未知错误信息:{e}")
                 return False, e
-
-            # async with session.post(self.add_url, data=json.dumps(request_data), headers=headers) as response_data:
-            #     response_data = await response_data.text()
-            #     print("ckb_add", response_data)
-            #     response_json_data = json.loads(response_data)
-            #
-            #     code = response_json_data.get("code")
-            #     message = response_json_data.get("message")
-            #
-            #     if code == "CKB-GW001":
-            #         logger.info(f"星火知识库app已存在，具体信息:{message}")
-            #         return True, message
-            #
-            #     if code != "CKB-0000":
-            #         logger.error(f"星火知识车新增app失败，错误信息:{message}")
-            #         return False, message
-            #
-            #     public_key = response_json_data.get("data").get("publicKey")
-            #     public_key_b64 = base64.b64decode(public_key)
-            #     public_key_b64 = load_der_public_key(public_key_b64, backend=default_backend())
-            #     logger.info(
-            #         f"星火知识库新增app成功，原始publick_key:{public_key}，加密后的publick_ley: {public_key_b64}")
-            #     return True, public_key_b64
 
     def encrypt(self, plain_text, public_key):
         if not isinstance(public_key, rsa.RSAPublicKey):
@@ -306,9 +283,9 @@ class CkbClient:
                         "currentSpaceType": "All",
                         "model": config_manager.ckb_model,
 
-                        "knowledgeSpaceEnable": True,  # TODO ?关键参数：启用知识空间
-                        "internetEnable": False,       # TODO ?键参数：禁用互联网搜索
-                        "debug": True                  # TODO ?调试模式
+                        "knowledgeSpaceEnable": True,
+                        "internetEnable": False,
+                        "debug": True
                     }
                 }
 
@@ -334,7 +311,6 @@ class CkbClient:
                 origin_response = await asyncio.wait_for(self.ws.receive_str(), timeout=180)
                 self.response_temp = json.loads(origin_response)
                 logger.info(f"返回帧：{json.dumps(self.response_temp, ensure_ascii=False, indent=2)}")
-                # code = self.response_temp.get("header").get("code")
                 status = self.response_temp["header"]["status"]
                 if status == 3:
                     continue
@@ -364,3 +340,4 @@ class CkbClient:
                         return response_final
         except asyncio.TimeoutError:
             return "接收知识库返回超时"
+

@@ -6,9 +6,14 @@
 import logging.config
 import toml
 import sys
+from datetime import datetime
+import os
 
 
 def log_dict():
+    # 确保 log 目录存在
+    os.makedirs('log', exist_ok=True)
+    
     # 日志配置字典
     logging_dic = {
         'version': 1.0,
@@ -16,7 +21,7 @@ def log_dict():
         # 日志格式
         'formatters': {
             'standard': {
-                'format': '[%(asctime)s] | [%(threadName)s:%(thread)d] | [%(name)s] | [%(levelname)s] | [%(pathname)s:%(lineno)d] - %(message)s',
+                'format': '%(asctime)s %(threadName)s:%(thread)d [%(name)s] %(levelname)s [%(pathname)s:%(lineno)d] %(message)s',
                 'datefmt': '%Y-%m-%d %H:%M:%S',
             },
             'simple': {
@@ -31,14 +36,14 @@ def log_dict():
         # 日志处理器
         'handlers': {
             'console_debug_handler': {
-                'level': 'INFO',  # 日志处理的级别限制
+                'level': 'DEBUG',  # 日志处理的级别限制
                 'class': 'logging.StreamHandler',  # 输出到终端
                 'formatter': 'standard'  # 日志格式
             },
             'file_info_handler': {
                 'level': 'INFO',
                 'class': 'logging.handlers.RotatingFileHandler',  # 保存到文件，日志轮转
-                'filename': 'log/app.log',
+                'filename': f"log/app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
                 'maxBytes': 1024 * 1024 * 10,  # 日志大小 10M
                 'backupCount': 10000,  # 日志文件保存数量限制
                 'encoding': 'utf-8',
@@ -152,10 +157,6 @@ class ConfigManager:
         return self.effect.get("thresholdScore", 0.1)
 
     @property
-    def ckb_qa_enable(self):
-        return self.mission.get("ckb_qa_enable", False)
-
-    @property
     def ckb_spark_enable(self):
         return self.effect.get("sparkEnable", False)
 
@@ -221,3 +222,4 @@ class ConfigManager:
 
 # 创建全局配置管理实例
 config_manager = ConfigManager()
+

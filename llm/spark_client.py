@@ -129,7 +129,11 @@ async def do_task(task_set, url, prompt, app_id, secret, key, domain):
     spark_client = SparkClient(url, app_id, secret, key, domain)
 
     for task in task_set.get_task():
-        response = await spark_client.call_llm(task.get_value(0), task.get_value(2), task.get_value(13), prompt)
+        question,answer,llm_response = task.get_value(0), task.get_value(1), task.get_value(13)  # TODO?
+        response = await spark_client.call_llm(question, answer, llm_response, prompt)
+        
+        logger.info(f"response: {response}")
+
         logger.debug(f"大模型标注：{response}")
         if response == "QPS_LIMIT":
             task.set_value(15, "超过并发限制")
@@ -142,7 +146,23 @@ async def do_task(task_set, url, prompt, app_id, secret, key, domain):
         elif response == "TOKEN_ERROR":
             task.set_value(15, "鉴权异常")
         else:
-            task.set_value(15, response)
+            # 解析类似 “输出：0\n解释：......” 的返回格式
+            try:
+                match_output = re.search(r'输出[:：]\s*(.+)', response)
+                match_explain = re.search(r'解释[:：]\s*([\s\S]+)', response)
+                if match_output or match_explain:
+                    output_val = match_output.group(1).strip() if match_output else ""
+                    explain_val = match_explain.group(1).strip() if match_explain else ""
+                    # 回复正确率 -> 索引15（P列）
+                    task.set_value(15, output_val)
+                    # 回复错误原因/解释 -> 索引17（R列）
+                    task.set_value(17, explain_val)
+                else:
+                    # 兜底：无法解析时原样落在回复正确率列
+                    task.set_value(15, response)
+            except Exception as e:
+                logger.error(f"解析LLM响应失败: {e}, 原始响应: {response}")
+                task.set_value(15, response)
 
         write_result(task.get_row_index(), task.get_row_data())
 
@@ -162,7 +182,8 @@ async def llm_result_init():
     while task_list:
         for _ in range(min(len(task_list), thread_num - len(task_set))):
             current_task = task_list.pop(0)
-            task_set.append(asyncio.create_task(do_task(current_task, spark_url, prompt, app_id, secret, key, domain)))
+            new_task = asyncio.create_task(do_task(current_task, spark_url, prompt, app_id, secret, key, domain))
+            task_set.append(new_task)
         # 等待第一个任务完成
         _, pending = await asyncio.wait(task_set, return_when=asyncio.FIRST_COMPLETED)
         task_set = list(pending)
