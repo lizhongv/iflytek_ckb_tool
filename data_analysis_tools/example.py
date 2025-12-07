@@ -5,7 +5,9 @@ import asyncio
 from data_analysis_tools.main import DataAnalysisTool
 from data_analysis_tools.excel_handler import ExcelHandler
 from data_analysis_tools.models import AnalysisInput
-from conf.settings import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def example_usage():

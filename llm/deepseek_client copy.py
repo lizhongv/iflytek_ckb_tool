@@ -2,7 +2,10 @@ import asyncio
 import os
 import re
 from excel_io.write_result import write_result, save_result
-from conf.settings import logger, config_manager
+from conf.settings import config_manager
+import logging
+
+logger = logging.getLogger(__name__)
 from excel_io.read_file import excel_init
 from llm.deepseek_api import deepseek_chat
 

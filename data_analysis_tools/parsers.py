@@ -18,7 +18,9 @@ from data_analysis_tools.models import (
     RecallAnalysisResult,
     ResponseAnalysisResult
 )
-from conf.settings import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_json_from_text(text: str) -> Optional[dict]:

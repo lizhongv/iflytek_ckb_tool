@@ -17,8 +17,10 @@ from data_analysis_tools.models import (
     ResponseAnalysisResult
 )
 from data_analysis_tools.analyzers import ProblemAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
-from conf.settings import logger
 from conf.error_codes import ErrorCode
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

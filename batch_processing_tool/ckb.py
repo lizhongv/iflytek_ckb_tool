@@ -4,22 +4,11 @@
 CKB client for Spark Knowledge Base
 """
 import time
+import os
+import sys
 import aiohttp
 import json
 import ssl
-
-from config import logger, config_manager
-from login import login_knowledge
-import sys
-import os
-
-# Add project root to path for importing conf modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-from conf.error_codes import ErrorCode
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -27,6 +16,19 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.backends import default_backend
 import uuid
 import asyncio
+
+# Add project root to path for importing conf modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from login import login_knowledge
+from conf.settings import config_manager
+from conf.error_codes import ErrorCode
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class CkbClient:

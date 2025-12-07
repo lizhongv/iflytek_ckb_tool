@@ -9,21 +9,38 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 import os
+import sys
 from pathlib import Path
 
-from ckb import CkbClient
-from excel_io import ExcelHandler, ConversationGroup, ConversationTask
-from config import logger, config_manager
-import sys
-import os
+# Add current directory (batch_processing_tool) to path for local imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 # Add project root to path for importing conf modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+# Setup root logging - this must be done before importing other modules that use logging
+from conf.logging import setup_root_logging
+setup_root_logging(
+    log_dir="log",
+    console_level="INFO",
+    file_level="DEBUG",
+    root_level="DEBUG",
+    use_timestamp=True,
+    log_filename_prefix="batch_processing_tool"
+)
+
+# Import local modules (relative imports work because current_dir is in sys.path)
+from ckb import CkbClient
+from excel_io import ExcelHandler, ConversationGroup, ConversationTask
+from conf.settings import config_manager
 from conf.error_codes import ErrorCode, create_response, get_success_response
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 async def process_conversation_group(

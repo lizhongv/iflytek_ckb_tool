@@ -53,7 +53,9 @@ from data_analysis_tools.parsers import (
     parse_response_analysis
 )
 from llm.deepseek_api import deepseek_chat
-from conf.settings import logger
+import logging
+
+logger = logging.getLogger(__name__)
 from conf.error_codes import ErrorCode
 
 

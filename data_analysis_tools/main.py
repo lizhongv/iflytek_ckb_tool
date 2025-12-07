@@ -44,8 +44,10 @@ from data_analysis_tools.analysis_executors import (
     ResponseAnalysisExecutor,
     AnalysisTaskResult
 )
-from conf.settings import logger
 from conf.error_codes import ErrorCode, create_response, get_success_response
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DataAnalysisTool:

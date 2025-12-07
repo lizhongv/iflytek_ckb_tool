@@ -13,7 +13,10 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import logger, config_manager
+from conf.settings import config_manager
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationTask:
@@ -155,7 +158,7 @@ class ExcelHandler:
         """
         try:
             self.df = pd.read_excel(self.file_path, sheet_name='Sheet1')
-            logger.info(f"Successfully read Excel file: {self.file_path}")
+            logger.info(f"Successfully read Excel file")
         except FileNotFoundError:
             logger.error(f"File not found: {self.file_path}")
             raise

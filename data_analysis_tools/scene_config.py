@@ -12,7 +12,9 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from conf.settings import logger
+import logging
+
+logger = logging.getLogger(__name__)
 from conf.error_codes import ErrorCode
 
 

@@ -30,7 +30,10 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from conf.error_codes import ErrorCode
-from config import config_manager, logger
+from conf.settings import config_manager
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LoginManager:
@@ -689,8 +692,6 @@ class LoginManager:
             except Exception as e:
                 logger.error(f"{step_name} execution error: {e}")
                 return False, ErrorCode.AUTH_UAP_FAILED
-        
-        logger.info("Login flow completed successfully")
         return True, None
     
     async def login_flow(self) -> Tuple[bool, Optional[ErrorCode]]:
@@ -715,20 +716,12 @@ async def login_knowledge() -> Tuple[bool, Optional[str], Optional[str], Optiona
         success, error_code = await login_manager.login()
         
         if success:
-            logger.info("Login test successful")
-            
-            # Display login information
-            logger.info(f"User ID: {login_manager.user_id}")
-            logger.info(f"Tenant ID: {login_manager.tenant_id}")
-            logger.info(f"Redirect server: {login_manager.redirect_ip}:{login_manager.redirect_port}")
-            
-            # Test login status check
-            if login_manager.is_logged_in():
-                logger.info("Login status verification successful")
-                return True, login_manager.user_id, login_manager.tenant_id, login_manager.cookie_session, None
-            else:
-                logger.error("Login status verification failed")
-                return False, None, None, None, ErrorCode.AUTH_UAP_FAILED
+            logger.info(f"Login test successful\n"
+            f"- User ID: {login_manager.user_id}\n"
+            f"- Tenant ID: {login_manager.tenant_id}\n"
+            f"- Redirect server: {login_manager.redirect_ip}:{login_manager.redirect_port}"
+            )
+            return True, login_manager.user_id, login_manager.tenant_id, login_manager.cookie_session, None
         else:
             logger.error(f"Login test failed: {error_code.code if error_code else 'Unknown'} - {error_code.message if error_code else 'Unknown error'}")
             return False, None, None, None, error_code or ErrorCode.AUTH_UAP_FAILED

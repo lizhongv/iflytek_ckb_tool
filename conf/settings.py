@@ -16,7 +16,9 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from conf.logging import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -106,7 +108,11 @@ class ConfigManager:
         
         self._load_config()
         self._validate()
-        logger.info(f"Configuration loaded: {config_file}")
+        # Use logger safely - it may not be configured yet if called before main.py
+        try:
+            logger.info(f"Configuration loaded: {config_file}")
+        except Exception:
+            pass  # Logger not configured yet, skip logging
     
     def _load_config(self):
         """Load configuration from YAML or TOML file"""
@@ -195,9 +201,9 @@ class ConfigManager:
     def _validate(self):
         """Validate configuration"""
         # Validate knowledge_num
-        if not (1 <= self.mission.knowledge_num <= 50):
+        if not (1 <= self.mission.knowledge_num <= 10):
             raise ValueError(
-                f"knowledge_num must be between 1 and 50, current: {self.mission.knowledge_num}"
+                f"knowledge_num must be between 1 and 10, current: {self.mission.knowledge_num}"
             )
         
         logger.info("Configuration validation passed")
