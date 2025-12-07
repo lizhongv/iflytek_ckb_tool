@@ -33,7 +33,7 @@ except Exception as e:
 from data_analysis_tools.models import (
     AnalysisInput,
     AnalysisResult,
-    ProblemAnalysisResult,
+    NormAnalysisResult,
     SetAnalysisResult,
     RecallAnalysisResult,
     ResponseAnalysisResult
@@ -47,7 +47,7 @@ from data_analysis_tools.prompts import (
     RESPONSE_ACCURACY_BY_SOURCE_PROMPT
 )
 from data_analysis_tools.parsers import (
-    parse_problem_analysis,
+    parse_norm_analysis,
     parse_set_analysis,
     parse_recall_judgment,
     parse_response_analysis
@@ -59,13 +59,13 @@ logger = logging.getLogger(__name__)
 from conf.error_codes import ErrorCode
 
 
-class ProblemAnalyzer:
-    """Problem analyzer"""
+class NormAnalyzer:
+    """Normativity analyzer"""
     
     def __init__(self, enable: bool = True):
         self.enable = enable
     
-    def analyze(self, question: str) -> Optional[ProblemAnalysisResult]:
+    def analyze(self, question: str) -> Optional[NormAnalysisResult]:
         """Analyze question normativity"""
         if not self.enable:
             return None
@@ -83,7 +83,7 @@ class ProblemAnalyzer:
             response = deepseek_chat(messages)
             logger.info(f"Problem analysis LLM response: {response[:200]}...")
             
-            result = parse_problem_analysis(response)
+            result = parse_norm_analysis(response)
             if not result:
                 error_msg = f"[{ErrorCode.ANALYSIS_PARSE_FAILED.code}] {ErrorCode.ANALYSIS_PARSE_FAILED.message}: {response[:200]}"
                 logger.warning(error_msg)

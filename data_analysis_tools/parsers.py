@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_analysis_tools.models import (
-    ProblemAnalysisResult,
+    NormAnalysisResult,
     SetAnalysisResult,
     RecallAnalysisResult,
     ResponseAnalysisResult
@@ -65,7 +65,7 @@ def _extract_json_from_text(text: str) -> Optional[dict]:
     return None
 
 
-def parse_problem_analysis(response: str) -> Optional[ProblemAnalysisResult]:
+def parse_norm_analysis(response: str) -> Optional[NormAnalysisResult]:
     """
     Parse problem analysis result (generic JSON parsing)
     Directly extract JSON, does not depend on specific field names
@@ -97,9 +97,9 @@ def parse_problem_analysis(response: str) -> Optional[ProblemAnalysisResult]:
         # If required fields missing, fallback to text parsing
         if is_normative is None or not problem_type:
             logger.warning("Required fields missing in JSON, trying text parsing")
-            return _parse_problem_analysis_text(text)
+            return _parse_norm_analysis_text(text)
         
-        return ProblemAnalysisResult(
+        return NormAnalysisResult(
             is_normative=is_normative,
             problem_type=problem_type,
             reason=reason
@@ -107,10 +107,10 @@ def parse_problem_analysis(response: str) -> Optional[ProblemAnalysisResult]:
     
     # JSON parsing failed, fallback to text parsing
     logger.warning("JSON parsing failed, trying text parsing")
-    return _parse_problem_analysis_text(text)
+    return _parse_norm_analysis_text(text)
 
 
-def _parse_problem_analysis_text(text: str) -> Optional[ProblemAnalysisResult]:
+def _parse_norm_analysis_text(text: str) -> Optional[NormAnalysisResult]:
     """Text format parsing (backward compatibility, only as fallback)"""
     # Generic extraction: find number 0 or 1
     normative_match = re.search(r'[:：]\s*([01])', text)
@@ -125,7 +125,7 @@ def _parse_problem_analysis_text(text: str) -> Optional[ProblemAnalysisResult]:
     if is_normative is None or not problem_type:
         return None
     
-    return ProblemAnalysisResult(
+    return NormAnalysisResult(
         is_normative=is_normative,
         problem_type=problem_type.strip(),
         reason=reason.strip() if reason else None

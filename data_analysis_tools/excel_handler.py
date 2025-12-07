@@ -189,10 +189,10 @@ class ExcelHandler:
                     row_data[f'溯源{i}'] = ''
             
             # Problem analysis results - use Chinese column names
-            if result.problem_analysis:
-                row_data['是否规范'] = result.problem_analysis.is_normative if result.problem_analysis.is_normative is not None else ''
-                row_data['问题类型'] = result.problem_analysis.problem_type if result.problem_analysis.problem_type else ''
-                row_data['问题原因'] = result.problem_analysis.reason if result.problem_analysis.reason else ''
+            if result.norm_analysis:
+                row_data['是否规范'] = result.norm_analysis.is_normative if result.norm_analysis.is_normative is not None else ''
+                row_data['问题类型'] = result.norm_analysis.problem_type if result.norm_analysis.problem_type else ''
+                row_data['问题原因'] = result.norm_analysis.reason if result.norm_analysis.reason else ''
             else:
                 row_data['是否规范'] = ''
                 row_data['问题类型'] = ''

@@ -45,12 +45,12 @@ setup_root_logging(
 )
 
 from data_analysis_tools.excel_handler import ExcelHandler
-from data_analysis_tools.analyzers import ProblemAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
+from data_analysis_tools.analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
 from data_analysis_tools.models import AnalysisInput, AnalysisResult, RecallAnalysisResult
 from data_analysis_tools.config import AnalysisConfig
 from data_analysis_tools.scene_config import SceneConfigLoader
 from data_analysis_tools.analysis_executors import (
-    ProblemAnalysisExecutor,
+    NormAnalysisExecutor,
     RecallAnalysisExecutor,
     ResponseAnalysisExecutor,
     AnalysisTaskResult
@@ -92,7 +92,7 @@ class DataAnalysisTool:
         
         # Initialize analyzers based on config
         # Problem-side analyzers (only enabled if problem_analysis is True)
-        self.norm_analyzer = ProblemAnalyzer(enable=enabled["norm_analysis"])
+        self.norm_analyzer = NormAnalyzer(enable=enabled["norm_analysis"])
         # Set analysis - independent analyzer for in/out set judgment
         self.set_analyzer = SetAnalyzer(
             enable=enabled["set_analysis"],
@@ -105,7 +105,7 @@ class DataAnalysisTool:
         self.response_analyzer = ResponseAnalyzer(enable=enabled["reply_analysis"])
         
         # Initialize three independent analysis executors
-        self.problem_executor = ProblemAnalysisExecutor(
+        self.norm_executor = NormAnalysisExecutor(
             norm_analyzer=self.norm_analyzer,
             set_analyzer=self.set_analyzer,
             enabled=enabled
@@ -144,7 +144,7 @@ class DataAnalysisTool:
                 if enabled["norm_analysis"]:
                     logger.info(f"  Executing problem normativity analysis...")
                     problem_result = self.norm_analyzer.analyze(input_data.question)
-                    result.problem_analysis = problem_result
+                    result.norm_analysis = problem_result
                 
                 # 1.2 In/out set analysis (if set_analysis is True)
                 if enabled["set_analysis"]:
@@ -271,8 +271,8 @@ class DataAnalysisTool:
                     row_idx = result_data.row_index
                     if 0 <= row_idx < len(results):
                         if task_name == "problem":
-                            if result_data.problem_analysis:
-                                results[row_idx].problem_analysis = result_data.problem_analysis
+                            if result_data.norm_analysis:
+                                results[row_idx].norm_analysis = result_data.norm_analysis
                             if result_data.set_analysis:
                                 results[row_idx].set_analysis = result_data.set_analysis
                         elif task_name == "recall":
@@ -287,7 +287,7 @@ class DataAnalysisTool:
     
     async def _analyze_problem_parallel(self, inputs: List[AnalysisInput]) -> List[AnalysisTaskResult]:
         """Execute problem-side analysis in parallel (internal method)"""
-        return await self.problem_executor.analyze_batch(inputs)
+        return await self.norm_executor.analyze_batch(inputs)
     
     async def _analyze_recall_parallel(self, inputs: List[AnalysisInput]) -> List[AnalysisTaskResult]:
         """Execute recall-side analysis in parallel (internal method)"""
@@ -316,13 +316,13 @@ class DataAnalysisTool:
                 input_data=input_data
             ))
         
-        task_results = await self.problem_executor.analyze_batch(inputs)
+        task_results = await self.norm_executor.analyze_batch(inputs)
         
         for result_data in task_results:
             row_idx = result_data.row_index
             if 0 <= row_idx < len(results):
-                if result_data.problem_analysis:
-                    results[row_idx].problem_analysis = result_data.problem_analysis
+                if result_data.norm_analysis:
+                    results[row_idx].norm_analysis = result_data.norm_analysis
                 if result_data.set_analysis:
                     results[row_idx].set_analysis = result_data.set_analysis
         

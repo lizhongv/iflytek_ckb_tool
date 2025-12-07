@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from data_analysis_tools.models import (
     AnalysisInput,
     AnalysisResult,
-    ProblemAnalysisResult,
+    NormAnalysisResult,
     SetAnalysisResult,
     RecallAnalysisResult,
     ResponseAnalysisResult
 )
-from data_analysis_tools.analyzers import ProblemAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
+from data_analysis_tools.analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
 from conf.error_codes import ErrorCode
 import logging
 
@@ -29,16 +29,16 @@ class AnalysisTaskResult:
     row_index: int
     success: bool
     error: Optional[str] = None
-    problem_analysis: Optional[ProblemAnalysisResult] = None
+    norm_analysis: Optional[NormAnalysisResult] = None
     set_analysis: Optional[SetAnalysisResult] = None
     recall_analysis: Optional[RecallAnalysisResult] = None
     response_analysis: Optional[ResponseAnalysisResult] = None
 
 
-class ProblemAnalysisExecutor:
-    """Problem-side analysis executor (independent module)"""
+class NormAnalysisExecutor:
+    """Normativity analysis executor (independent module)"""
     
-    def __init__(self, norm_analyzer: ProblemAnalyzer, set_analyzer: SetAnalyzer, enabled: dict):
+    def __init__(self, norm_analyzer: NormAnalyzer, set_analyzer: SetAnalyzer, enabled: dict):
         """
         Initialize problem-side analysis executor
         
@@ -71,10 +71,11 @@ class ProblemAnalysisExecutor:
                 if self.enabled.get("norm_analysis", False):
                     logger.info(f"  Executing problem normativity analysis (row {row_index + 1})...")
                     # Run synchronous analyzer method in thread pool
-                    problem_result = await asyncio.to_thread(
+                    norm_result = await asyncio.to_thread(
                         self.norm_analyzer.analyze, input_data.question
                     )
-                    result.problem_analysis = problem_result
+                    if norm_result:  # Only assign if result is not None
+                        result.norm_analysis = norm_result
                 
                 # 1.2 In/out set analysis
                 if self.enabled.get("set_analysis", False):

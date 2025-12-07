@@ -22,7 +22,7 @@ class AnalysisInput:
 
 
 @dataclass
-class ProblemAnalysisResult:
+class NormAnalysisResult:
     """Problem analysis result"""
     is_normative: int  # Whether question is standard: 1/0 (corresponds to is_standard in prompt)
     problem_type: str  # Question type: "Effective", "Meaningless", "Violation", "Ambiguous"
@@ -81,7 +81,7 @@ class AnalysisResult:
     """Complete analysis result"""
     row_index: int  # Excel row index
     input_data: AnalysisInput
-    problem_analysis: Optional[ProblemAnalysisResult] = None
+    norm_analysis: Optional[NormAnalysisResult] = None
     set_analysis: Optional[SetAnalysisResult] = None
     recall_analysis: Optional[RecallAnalysisResult] = None
     response_analysis: Optional[ResponseAnalysisResult] = None
