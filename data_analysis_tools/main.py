@@ -33,6 +33,17 @@ except ImportError:
 except Exception as e:
     print(f"Error loading .env file: {e}")
 
+# Setup root logging - this must be done before importing other modules that use logging
+from conf.logging import setup_root_logging
+setup_root_logging(
+    log_dir="log",
+    console_level="INFO",
+    file_level="DEBUG",
+    root_level="DEBUG",
+    use_timestamp=True,
+    log_filename_prefix="batch_processing_tool"
+)
+
 from data_analysis_tools.excel_handler import ExcelHandler
 from data_analysis_tools.analyzers import ProblemAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
 from data_analysis_tools.models import AnalysisInput, AnalysisResult, RecallAnalysisResult
@@ -425,7 +436,7 @@ async def main() -> dict:
             # Default configuration
             config = AnalysisConfig(
                 query_selected=True,
-                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\test_examples_output_20251206_202503.xlsx",
+                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\test_examples_output_20251207_193231.xlsx",
                 chunk_selected=True,
                 answer_selected=True,
                 problem_analysis=True,
@@ -433,7 +444,7 @@ async def main() -> dict:
                 set_analysis=True,
                 recall_analysis=True,
                 reply_analysis=True,
-                scene_config_file=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data_analysis_tools\scene_config.xlsx",
+                scene_config_file=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\scene_config.xlsx",
                 parallel_execution=True  # Default to parallel execution
             )
         

@@ -104,12 +104,12 @@ class ExcelHandler:
             # If found numbered source columns, read them (only non-empty values)
             if max_source_num > 0:
                 for i in range(1, max_source_num + 1):
-                source_col_name = f'溯源{i}'
-                if source_col_name in self.df.columns:
-                    if not pd.isna(row.get(source_col_name)):
-                        source_value = str(row.get(source_col_name, '')).strip()
-                        if source_value:
-                            sources.append(source_value)
+                    source_col_name = f'溯源{i}'
+                    if source_col_name in self.df.columns:
+                        if not pd.isna(row.get(source_col_name)):
+                            source_value = str(row.get(source_col_name, '')).strip()
+                            if source_value:
+                                sources.append(source_value)
             
             # If no numbered sources found, look for other source columns
             if not sources:
