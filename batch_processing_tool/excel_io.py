@@ -13,7 +13,7 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from conf.settings import config_manager
+from config import config_manager
 import logging
 
 logger = logging.getLogger(__name__)

@@ -30,7 +30,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from conf.error_codes import ErrorCode
-from conf.settings import config_manager
+from config import config_manager
 import logging
 
 logger = logging.getLogger(__name__)

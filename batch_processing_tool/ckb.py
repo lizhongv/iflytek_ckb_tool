@@ -24,7 +24,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from login import login_knowledge
-from conf.settings import config_manager
+from config import config_manager
 from conf.error_codes import ErrorCode
 
 import logging

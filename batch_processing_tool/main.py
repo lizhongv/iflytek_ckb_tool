@@ -36,7 +36,7 @@ setup_root_logging(
 # Import local modules (relative imports work because current_dir is in sys.path)
 from ckb import CkbClient
 from excel_io import ExcelHandler, ConversationGroup, ConversationTask
-from conf.settings import config_manager
+from config import config_manager
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
 import logging
