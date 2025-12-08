@@ -44,6 +44,9 @@ from data_analysis_tool.config import AnalysisConfig
 from data_analysis_tool.excel_handler import ExcelHandler as AnalysisExcelHandler
 from data_analysis_tool.models import AnalysisInput, AnalysisResult
 
+# Import metrics analysis modules
+from metrics_analysis_tool.main import analyze_metrics, print_metrics_report
+
 # Import error handling
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
@@ -273,68 +276,69 @@ def convert_analysis_results_to_excel_data(
             
             if analysis_result:
                 # Norm analysis results (problem-side normativity analysis)
+                # Use column names matching data_analysis_tool/excel_handler.py for metrics analysis compatibility
                 if analysis_result.norm_analysis:
-                    row_data['是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
-                    row_data['问题类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
-                    row_data['问题原因'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
+                    row_data['问题是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
+                    row_data['问题（非）规范性类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
+                    row_data['问题（非）规范性理由'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
                 else:
-                    row_data['是否规范'] = ''
-                    row_data['问题类型'] = ''
-                    row_data['问题原因'] = ''
+                    row_data['问题是否规范'] = ''
+                    row_data['问题（非）规范性类型'] = ''
+                    row_data['问题（非）规范性理由'] = ''
                 
                 # Set analysis results
                 if analysis_result.set_analysis:
-                    row_data['是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
-                    row_data['在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
-                    row_data['在集原因'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
+                    row_data['问题是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
+                    row_data['问题（非）在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
+                    row_data['问题（非）在集理由'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
                 else:
-                    row_data['是否在集'] = ''
-                    row_data['在集类型'] = ''
-                    row_data['在集原因'] = ''
+                    row_data['问题是否在集'] = ''
+                    row_data['问题（非）在集类型'] = ''
+                    row_data['问题（非）在集理由'] = ''
                 
                 # Recall analysis results
                 if analysis_result.recall_analysis:
                     if analysis_result.recall_analysis.is_retrieval_correct is not None:
                         row_data['检索是否正确'] = analysis_result.recall_analysis.is_retrieval_correct
-                        row_data['检索判断类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
-                        row_data['检索原因'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
+                        row_data['检索正误类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
+                        row_data['检索正误理由'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
                     else:
                         row_data['检索是否正确'] = ''
-                        row_data['检索判断类型'] = ''
-                        row_data['检索原因'] = ''
+                        row_data['检索正误类型'] = ''
+                        row_data['检索正误理由'] = ''
                 else:
                     row_data['检索是否正确'] = ''
-                    row_data['检索判断类型'] = ''
-                    row_data['检索原因'] = ''
+                    row_data['检索正误类型'] = ''
+                    row_data['检索正误理由'] = ''
                 
                 # Response analysis results
                 if analysis_result.response_analysis:
                     if analysis_result.response_analysis.is_response_correct is not None:
                         row_data['回复是否正确'] = analysis_result.response_analysis.is_response_correct
-                        row_data['回复判断类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
-                        row_data['回复原因'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
+                        row_data['回复正误类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
+                        row_data['回复正误理由'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
                     else:
                         row_data['回复是否正确'] = ''
-                        row_data['回复判断类型'] = ''
-                        row_data['回复原因'] = ''
+                        row_data['回复正误类型'] = ''
+                        row_data['回复正误理由'] = ''
                 else:
                     row_data['回复是否正确'] = ''
-                    row_data['回复判断类型'] = ''
-                    row_data['回复原因'] = ''
+                    row_data['回复正误类型'] = ''
+                    row_data['回复正误理由'] = ''
             else:
                 # No analysis result, fill with empty values
-                row_data['是否规范'] = ''
-                row_data['问题类型'] = ''
-                row_data['问题原因'] = ''
-                row_data['是否在集'] = ''
-                row_data['在集类型'] = ''
-                row_data['在集原因'] = ''
+                row_data['问题是否规范'] = ''
+                row_data['问题（非）规范性类型'] = ''
+                row_data['问题（非）规范性理由'] = ''
+                row_data['问题是否在集'] = ''
+                row_data['问题（非）在集类型'] = ''
+                row_data['问题（非）在集理由'] = ''
                 row_data['检索是否正确'] = ''
-                row_data['检索判断类型'] = ''
-                row_data['检索原因'] = ''
+                row_data['检索正误类型'] = ''
+                row_data['检索正误理由'] = ''
                 row_data['回复是否正确'] = ''
-                row_data['回复判断类型'] = ''
-                row_data['回复原因'] = ''
+                row_data['回复正误类型'] = ''
+                row_data['回复正误理由'] = ''
             
             excel_data.append(row_data)
     
@@ -626,10 +630,10 @@ async def main() -> dict:
             source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
             result_columns = ['模型回复', 'RequestId', 'SessionId']
             analysis_columns = [
-                '是否规范', '问题类型', '问题原因',
-                '是否在集', '在集类型', '在集原因',
-                '检索是否正确', '检索判断类型', '检索原因',
-                '回复是否正确', '回复判断类型', '回复原因'
+                '问题是否规范', '问题（非）规范性类型', '问题（非）规范性理由',
+                '问题是否在集', '问题（非）在集类型', '问题（非）在集理由',
+                '检索是否正确', '检索正误类型', '检索正误理由',
+                '回复是否正确', '回复正误类型', '回复正误理由'
             ]
             column_order = base_columns + source_columns + result_columns + analysis_columns
             
@@ -646,7 +650,55 @@ async def main() -> dict:
             logger.error(f"Failed to save results: {e}")
             return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
         
+        # Step 8: Perform metrics analysis on the analysis results Excel file
+        metrics_json_file = None
+        if any_analysis_enabled and output_file and os.path.exists(output_file):
+            logger.info("Step 8: Starting metrics analysis on analysis results...")
+            try:
+                # Perform metrics analysis using the same analysis flags
+                metrics = analyze_metrics(
+                    file_path=output_file,
+                    norm_analysis=norm_analysis,
+                    set_analysis=set_analysis,
+                    recall_analysis=recall_analysis,
+                    reply_analysis=reply_analysis
+                )
+                
+                if metrics:
+                    # Generate metrics JSON output file path
+                    metrics_json_file = str(output_dir / f"{input_path.stem}_metrics_{timestamp}.json")
+                    
+                    # Save metrics to JSON file
+                    with open(metrics_json_file, 'w', encoding='utf-8') as f:
+                        json.dump(metrics, f, indent=2, ensure_ascii=False)
+                    
+                    logger.info(f"Metrics analysis completed successfully")
+                    logger.info(f"Metrics JSON saved to: {metrics_json_file}")
+                    
+                    # Also print metrics to console
+                    logger.info("Metrics analysis results:")
+                    print_metrics_report(metrics)
+                else:
+                    logger.warning("Metrics analysis returned empty results")
+            except Exception as e:
+                logger.error(f"Metrics analysis failed: {e}", exc_info=True)
+                logger.warning("Continuing despite metrics analysis failure...")
+        else:
+            if not any_analysis_enabled:
+                logger.info("Step 8: Skipping metrics analysis (no analysis modules were enabled)")
+            elif not output_file:
+                logger.warning("Step 8: Skipping metrics analysis (output file not available)")
+            else:
+                logger.warning(f"Step 8: Skipping metrics analysis (output file not found: {output_file})")
+        
+        logger.info("=" * 80)
         logger.info("Integrated batch processing and analysis completed successfully!")
+        logger.info(f"Output files:")
+        logger.info(f"  1. Analysis results Excel: {output_file}")
+        if metrics_json_file:
+            logger.info(f"  2. Metrics analysis JSON: {metrics_json_file}")
+        logger.info("=" * 80)
+        
         return create_response(True)
         
     except Exception as e:

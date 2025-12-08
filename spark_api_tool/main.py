@@ -4,12 +4,13 @@
 Main entry point for batch processing tool
 Processes questions through Spark Knowledge Base and collects answers and retrieval sources
 """
-import asyncio
-import uuid
-from datetime import datetime
-from typing import List, Optional
 import os
 import sys
+import asyncio
+import uuid
+import logging
+from datetime import datetime
+from typing import List, Optional
 from pathlib import Path
 
 # Add current directory (spark_api_tool) to path for local imports
@@ -27,10 +28,13 @@ from conf.logging import setup_root_logging
 setup_root_logging(
     log_dir="log",
     console_level="INFO",
-    file_level="INFO",
+    file_level="DEBUG",
     root_level="DEBUG",
     use_timestamp=False,
-    log_filename_prefix="spark_api_tool"
+    log_filename_prefix="spark_api_tool",
+    enable_dual_file_logging=True,
+    root_log_filename="root.log",
+    root_log_level="INFO"
 )
 
 # Import local modules (relative imports work because current_dir is in sys.path)
@@ -39,9 +43,7 @@ from excel_io import ExcelHandler, ConversationGroup, ConversationTask
 from config import config_manager
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
-import logging
 logger = logging.getLogger(__name__)
-
 
 async def process_conversation_group(
     ckb_client: CkbClient,
@@ -136,6 +138,7 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     logger.info(f"[BATCH_START] total_groups={total_groups} thread_num={thread_num}")
     
     # Initialize CKB client (use config value if not specified)
+    logger.info(f"[CKB] Initialize CKB...")
     ckb_client = CkbClient(intranet=None)
     
     # Get initial authentication
@@ -234,8 +237,6 @@ async def main() -> dict:
         try:
             handler = ExcelHandler(input_file)
             groups = handler.read_data()
-            total_groups = len(groups)
-            logger.info(f"[FILE_READ] Successfully read {total_groups} conversation groups")
         except FileNotFoundError:
             logger.error(f"[ERROR] File not found: {input_file}")
             return create_response(False, ErrorCode.FILE_NOT_FOUND, input_file)
@@ -275,7 +276,7 @@ async def main() -> dict:
         
         # Save results to Excel
         try:
-            handler.write_results(processed_groups, output_file_with_timestamp)
+            handler.write_results_excel(processed_groups, output_file_with_timestamp)
             logger.info(f"[FILE_WRITE] Excel file saved successfully")
         except PermissionError:
             logger.error(f"[ERROR] File is locked by another program: {output_file_with_timestamp}")

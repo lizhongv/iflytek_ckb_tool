@@ -2,13 +2,17 @@
 
 """
 FastAPI application for integrated batch processing and data analysis
+Provides API endpoints for task management with progress tracking
 """
 import asyncio
 import sys
 import os
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
+import threading
 
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Import FastAPI and related modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 from typing import Optional as Opt
 
@@ -46,10 +50,269 @@ from data_analysis_tool.main import DataAnalysisTool
 from data_analysis_tool.config import AnalysisConfig
 from data_analysis_tool.models import AnalysisInput, AnalysisResult
 
+# Import metrics analysis modules
+from metrics_analysis_tool.main import analyze_metrics, print_metrics_report
+
 # Import error handling
 from conf.error_codes import ErrorCode, create_response
 
-# Helper functions (copied from main.py to avoid circular imports)
+# Import log parser for progress tracking
+from log_parser2 import get_latest_progress
+
+
+# ============================================================================
+# Task Status Management
+# ============================================================================
+
+class TaskStatus(str, Enum):
+    """Task status enumeration"""
+    NOT_STARTED = "未执行"
+    IN_PROGRESS = "正在进行"
+    COMPLETED = "完成"
+    SKIPPED = "不执行"
+    FAILED = "失败"
+    CANCELLED = "已中断"
+
+
+class TaskState:
+    """Task state management class"""
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+        self.lock = threading.Lock()
+        self.cancelled = False
+        
+        # Task status
+        self.batch_status = TaskStatus.NOT_STARTED
+        self.norm_status = TaskStatus.NOT_STARTED
+        self.set_status = TaskStatus.NOT_STARTED
+        self.recall_status = TaskStatus.NOT_STARTED
+        self.reply_status = TaskStatus.NOT_STARTED
+        self.metrics_status = TaskStatus.NOT_STARTED
+        
+        # Progress (0-100)
+        self.batch_progress = 0.0
+        self.norm_progress = 0.0
+        self.set_progress = 0.0
+        self.recall_progress = 0.0
+        self.reply_progress = 0.0
+        self.metrics_progress = 0.0
+        
+        # File paths
+        self.excel_file = None
+        self.json_file = None
+        self.intermediate_file = None
+        
+        # Error message
+        self.error_message = None
+        self.created_at = datetime.now()
+        self.updated_at = datetime.now()
+    
+    def cancel(self):
+        """Mark task as cancelled"""
+        with self.lock:
+            self.cancelled = True
+            self.updated_at = datetime.now()
+    
+    def is_cancelled(self) -> bool:
+        """Check if task is cancelled"""
+        with self.lock:
+            return self.cancelled
+    
+    def update_status(self, **kwargs):
+        """Update task status"""
+        with self.lock:
+            self.updated_at = datetime.now()
+            if 'batch_status' in kwargs:
+                self.batch_status = kwargs['batch_status']
+            if 'norm_status' in kwargs:
+                self.norm_status = kwargs['norm_status']
+            if 'set_status' in kwargs:
+                self.set_status = kwargs['set_status']
+            if 'recall_status' in kwargs:
+                self.recall_status = kwargs['recall_status']
+            if 'reply_status' in kwargs:
+                self.reply_status = kwargs['reply_status']
+            if 'metrics_status' in kwargs:
+                self.metrics_status = kwargs['metrics_status']
+            
+            if 'batch_progress' in kwargs:
+                self.batch_progress = kwargs['batch_progress']
+            if 'norm_progress' in kwargs:
+                self.norm_progress = kwargs['norm_progress']
+            if 'set_progress' in kwargs:
+                self.set_progress = kwargs['set_progress']
+            if 'recall_progress' in kwargs:
+                self.recall_progress = kwargs['recall_progress']
+            if 'reply_progress' in kwargs:
+                self.reply_progress = kwargs['reply_progress']
+            if 'metrics_progress' in kwargs:
+                self.metrics_progress = kwargs['metrics_progress']
+            
+            if 'excel_file' in kwargs:
+                self.excel_file = kwargs['excel_file']
+            if 'json_file' in kwargs:
+                self.json_file = kwargs['json_file']
+            if 'intermediate_file' in kwargs:
+                self.intermediate_file = kwargs['intermediate_file']
+            if 'error_message' in kwargs:
+                self.error_message = kwargs['error_message']
+    
+    def get_total_progress(self) -> float:
+        """Calculate total progress based on weights"""
+        with self.lock:
+            # Weights: batch=30%, norm=10%, set=10%, recall=20%, reply=20%, metrics=10%
+            total = 0.0
+            
+            # Batch processing: 30%
+            if self.batch_status == TaskStatus.COMPLETED:
+                total += 30.0
+            elif self.batch_status == TaskStatus.IN_PROGRESS:
+                total += 30.0 * (self.batch_progress / 100.0)
+            elif self.batch_status == TaskStatus.SKIPPED:
+                total += 30.0  # Skipped tasks are treated as completed
+            elif self.batch_status == TaskStatus.CANCELLED:
+                total += 30.0 * (self.batch_progress / 100.0)  # Partial progress
+            elif self.batch_status == TaskStatus.NOT_STARTED:
+                # If later tasks are running, assume batch is done
+                if (self.norm_status != TaskStatus.NOT_STARTED or 
+                    self.set_status != TaskStatus.NOT_STARTED or
+                    self.recall_status != TaskStatus.NOT_STARTED or
+                    self.reply_status != TaskStatus.NOT_STARTED):
+                    total += 30.0
+            
+            # Norm analysis: 10%
+            if self.norm_status == TaskStatus.COMPLETED:
+                total += 10.0
+            elif self.norm_status == TaskStatus.IN_PROGRESS:
+                total += 10.0 * (self.norm_progress / 100.0)
+            elif self.norm_status == TaskStatus.SKIPPED:
+                total += 10.0
+            elif self.norm_status == TaskStatus.CANCELLED:
+                total += 10.0 * (self.norm_progress / 100.0)
+            elif self.norm_status == TaskStatus.NOT_STARTED:
+                # If later tasks are running, assume norm is done
+                if (self.set_status != TaskStatus.NOT_STARTED or
+                    self.recall_status != TaskStatus.NOT_STARTED or
+                    self.reply_status != TaskStatus.NOT_STARTED or
+                    self.metrics_status != TaskStatus.NOT_STARTED):
+                    total += 10.0
+            
+            # Set analysis: 10%
+            if self.set_status == TaskStatus.COMPLETED:
+                total += 10.0
+            elif self.set_status == TaskStatus.IN_PROGRESS:
+                total += 10.0 * (self.set_progress / 100.0)
+            elif self.set_status == TaskStatus.SKIPPED:
+                total += 10.0
+            elif self.set_status == TaskStatus.CANCELLED:
+                total += 10.0 * (self.set_progress / 100.0)
+            elif self.set_status == TaskStatus.NOT_STARTED:
+                # If later tasks are running, assume set is done
+                if (self.recall_status != TaskStatus.NOT_STARTED or
+                    self.reply_status != TaskStatus.NOT_STARTED or
+                    self.metrics_status != TaskStatus.NOT_STARTED):
+                    total += 10.0
+            
+            # Recall analysis: 20%
+            if self.recall_status == TaskStatus.COMPLETED:
+                total += 20.0
+            elif self.recall_status == TaskStatus.IN_PROGRESS:
+                total += 20.0 * (self.recall_progress / 100.0)
+            elif self.recall_status == TaskStatus.SKIPPED:
+                total += 20.0
+            elif self.recall_status == TaskStatus.CANCELLED:
+                total += 20.0 * (self.recall_progress / 100.0)
+            elif self.recall_status == TaskStatus.NOT_STARTED:
+                # If later tasks are running, assume recall is done
+                if (self.reply_status != TaskStatus.NOT_STARTED or
+                    self.metrics_status != TaskStatus.NOT_STARTED):
+                    total += 20.0
+            
+            # Reply analysis: 20%
+            if self.reply_status == TaskStatus.COMPLETED:
+                total += 20.0
+            elif self.reply_status == TaskStatus.IN_PROGRESS:
+                total += 20.0 * (self.reply_progress / 100.0)
+            elif self.reply_status == TaskStatus.SKIPPED:
+                total += 20.0
+            elif self.reply_status == TaskStatus.CANCELLED:
+                total += 20.0 * (self.reply_progress / 100.0)
+            elif self.reply_status == TaskStatus.NOT_STARTED:
+                # If later tasks are running, assume reply is done
+                if self.metrics_status != TaskStatus.NOT_STARTED:
+                    total += 20.0
+            
+            # Metrics analysis: 10%
+            if self.metrics_status == TaskStatus.COMPLETED:
+                total += 10.0
+            elif self.metrics_status == TaskStatus.IN_PROGRESS:
+                total += 10.0 * (self.metrics_progress / 100.0)
+            elif self.metrics_status == TaskStatus.SKIPPED:
+                total += 10.0
+            elif self.metrics_status == TaskStatus.CANCELLED:
+                total += 10.0 * (self.metrics_progress / 100.0)
+            
+            return min(100.0, total)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        with self.lock:
+            return {
+                'task_id': self.task_id,
+                'total_progress': self.get_total_progress(),
+                'status': {
+                    'batch_status': self.batch_status.value,
+                    'norm_status': self.norm_status.value,
+                    'set_status': self.set_status.value,
+                    'recall_status': self.recall_status.value,
+                    'reply_status': self.reply_status.value,
+                    'metrics_status': self.metrics_status.value
+                },
+                'progress': {
+                    'batch_progress': self.batch_progress,
+                    'norm_progress': self.norm_progress,
+                    'set_progress': self.set_progress,
+                    'recall_progress': self.recall_progress,
+                    'reply_progress': self.reply_progress,
+                    'metrics_progress': self.metrics_progress
+                },
+                'files': {
+                    'excel_file': self.excel_file,
+                    'json_file': self.json_file,
+                    'intermediate_file': self.intermediate_file
+                },
+                'error_message': self.error_message,
+                'created_at': self.created_at.isoformat(),
+                'updated_at': self.updated_at.isoformat(),
+                'cancelled': self.cancelled
+            }
+
+
+# Global task storage
+task_storage: Dict[str, TaskState] = {}
+task_storage_lock = threading.Lock()
+
+
+def get_task_state(task_id: str) -> Optional[TaskState]:
+    """Get task state by task_id"""
+    with task_storage_lock:
+        return task_storage.get(task_id)
+
+
+def create_task_state(task_id: str) -> TaskState:
+    """Create new task state"""
+    with task_storage_lock:
+        if task_id in task_storage:
+            raise ValueError(f"Task {task_id} already exists")
+        task_state = TaskState(task_id)
+        task_storage[task_id] = task_state
+        return task_state
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
 def convert_batch_results_to_analysis_inputs(
     batch_groups: list[ConversationGroup],
     chunk_selected: bool = False,
@@ -57,38 +320,24 @@ def convert_batch_results_to_analysis_inputs(
 ) -> list[AnalysisInput]:
     """
     Convert batch processing results to analysis input format
-    
-    Args:
-        batch_groups: List of ConversationGroup from batch processing
-        chunk_selected: Whether correct source is available
-        answer_selected: Whether correct answer is available
-        
-    Returns:
-        List of AnalysisInput objects
     """
     analysis_inputs = []
     
     for group in batch_groups:
         for task in group.get_tasks():
-            # Extract question (required)
             question = task.question if task.question else ""
             if not question:
                 continue
             
-            # Extract correct source (if available)
             correct_source = None
             if chunk_selected:
                 correct_source = task.correct_source if task.correct_source else None
             
-            # Extract correct answer (if available)
             correct_answer = None
             if answer_selected:
                 correct_answer = task.correct_answer if task.correct_answer else None
             
-            # Extract sources (retrieval results from batch processing)
             sources = task.sources if task.sources else []
-            
-            # Extract model response
             model_response = task.model_response if task.model_response else None
             
             analysis_inputs.append(AnalysisInput(
@@ -109,46 +358,33 @@ def convert_analysis_results_to_excel_data(
 ) -> list[dict]:
     """
     Convert batch processing results and analysis results to Excel format
-    
-    Args:
-        batch_groups: List of ConversationGroup from batch processing
-        analysis_results: List of AnalysisResult from data analysis
-        input_file_path: Optional input file path to detect source column count
-        
-    Returns:
-        List of dictionaries for Excel output
+    Use column names matching data_analysis_tool/excel_handler.py for metrics analysis compatibility
     """
     excel_data = []
     
     # Create a mapping from question to analysis result
-    # Use stripped question as key to handle whitespace differences
     analysis_map = {}
     for result in analysis_results:
         question = result.input_data.question
         if question:
-            # Normalize question by stripping whitespace for matching
             normalized_question = question.strip()
             analysis_map[normalized_question] = result
-            # Also store original question as key for exact match
             analysis_map[question] = result
     
     logger.info(f"Created analysis map with {len(analysis_map)} entries from {len(analysis_results)} analysis results")
     
     # Determine maximum number of source columns
-    # 1. Check from batch processing results
     max_sources_from_batch = 0
     for group in batch_groups:
         for task in group.get_tasks():
             if task.sources:
                 max_sources_from_batch = max(max_sources_from_batch, len(task.sources))
     
-    # 2. Check from analysis results
     max_sources_from_analysis = 0
     for result in analysis_results:
         if result.input_data.sources:
             max_sources_from_analysis = max(max_sources_from_analysis, len(result.input_data.sources))
     
-    # 3. Check from input file if provided
     max_sources_from_input = 0
     if input_file_path and os.path.exists(input_file_path):
         try:
@@ -165,16 +401,13 @@ def convert_analysis_results_to_excel_data(
         except Exception as e:
             logger.warning(f"Failed to read input file for source column detection: {e}")
     
-    # Use the maximum of all sources
     max_sources = max(
-        config_manager.mission.knowledge_num,  # From config
-        max_sources_from_batch,  # From batch processing results
-        max_sources_from_analysis,  # From analysis results
-        max_sources_from_input  # From input file
+        config_manager.mission.knowledge_num,
+        max_sources_from_batch,
+        max_sources_from_analysis,
+        max_sources_from_input
     )
-    logger.info(f"Using {max_sources} source columns (from config: {config_manager.mission.knowledge_num}, "
-                f"from batch: {max_sources_from_batch}, from analysis: {max_sources_from_analysis}, "
-                f"from input: {max_sources_from_input})")
+    logger.info(f"Using {max_sources} source columns")
     
     # Process batch groups and merge with analysis results
     for group in batch_groups:
@@ -187,7 +420,7 @@ def convert_analysis_results_to_excel_data(
             row_data['参考溯源'] = task.correct_source if task.correct_source else ''
             row_data['参考答案'] = task.correct_answer if task.correct_answer else ''
             
-            # Source fields (溯源1, 溯源2, ...) - dynamic based on max_sources
+            # Source fields (溯源1, 溯源2, ...)
             for i in range(1, max_sources + 1):
                 if task.sources and i <= len(task.sources):
                     row_data[f'溯源{i}'] = task.sources[i - 1] if task.sources[i - 1] else ''
@@ -200,144 +433,129 @@ def convert_analysis_results_to_excel_data(
             row_data['SessionId'] = task.session_id if task.session_id else ''
             
             # Analysis results (if available)
-            # Try exact match first, then normalized match
             analysis_result = analysis_map.get(task.question)
             if not analysis_result and task.question:
                 normalized_question = task.question.strip()
                 analysis_result = analysis_map.get(normalized_question)
             
             if analysis_result:
-                # Norm analysis results (problem-side normativity analysis)
+                # Norm analysis results
                 if analysis_result.norm_analysis:
-                    row_data['是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
-                    row_data['问题类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
-                    row_data['问题原因'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
+                    row_data['问题是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
+                    row_data['问题（非）规范性类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
+                    row_data['问题（非）规范性理由'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
                 else:
-                    row_data['是否规范'] = ''
-                    row_data['问题类型'] = ''
-                    row_data['问题原因'] = ''
+                    row_data['问题是否规范'] = ''
+                    row_data['问题（非）规范性类型'] = ''
+                    row_data['问题（非）规范性理由'] = ''
                 
                 # Set analysis results
                 if analysis_result.set_analysis:
-                    row_data['是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
-                    row_data['在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
-                    row_data['在集原因'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
+                    row_data['问题是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
+                    row_data['问题（非）在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
+                    row_data['问题（非）在集理由'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
                 else:
-                    row_data['是否在集'] = ''
-                    row_data['在集类型'] = ''
-                    row_data['在集原因'] = ''
+                    row_data['问题是否在集'] = ''
+                    row_data['问题（非）在集类型'] = ''
+                    row_data['问题（非）在集理由'] = ''
                 
                 # Recall analysis results
                 if analysis_result.recall_analysis:
                     if analysis_result.recall_analysis.is_retrieval_correct is not None:
                         row_data['检索是否正确'] = analysis_result.recall_analysis.is_retrieval_correct
-                        row_data['检索判断类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
-                        row_data['检索原因'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
+                        row_data['检索正误类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
+                        row_data['检索正误理由'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
                     else:
                         row_data['检索是否正确'] = ''
-                        row_data['检索判断类型'] = ''
-                        row_data['检索原因'] = ''
+                        row_data['检索正误类型'] = ''
+                        row_data['检索正误理由'] = ''
                 else:
                     row_data['检索是否正确'] = ''
-                    row_data['检索判断类型'] = ''
-                    row_data['检索原因'] = ''
+                    row_data['检索正误类型'] = ''
+                    row_data['检索正误理由'] = ''
                 
                 # Response analysis results
                 if analysis_result.response_analysis:
                     if analysis_result.response_analysis.is_response_correct is not None:
                         row_data['回复是否正确'] = analysis_result.response_analysis.is_response_correct
-                        row_data['回复判断类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
-                        row_data['回复原因'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
+                        row_data['回复正误类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
+                        row_data['回复正误理由'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
                     else:
                         row_data['回复是否正确'] = ''
-                        row_data['回复判断类型'] = ''
-                        row_data['回复原因'] = ''
+                        row_data['回复正误类型'] = ''
+                        row_data['回复正误理由'] = ''
                 else:
                     row_data['回复是否正确'] = ''
-                    row_data['回复判断类型'] = ''
-                    row_data['回复原因'] = ''
+                    row_data['回复正误类型'] = ''
+                    row_data['回复正误理由'] = ''
             else:
                 # No analysis result, fill with empty values
-                row_data['是否规范'] = ''
-                row_data['问题类型'] = ''
-                row_data['问题原因'] = ''
-                row_data['是否在集'] = ''
-                row_data['在集类型'] = ''
-                row_data['在集原因'] = ''
+                row_data['问题是否规范'] = ''
+                row_data['问题（非）规范性类型'] = ''
+                row_data['问题（非）规范性理由'] = ''
+                row_data['问题是否在集'] = ''
+                row_data['问题（非）在集类型'] = ''
+                row_data['问题（非）在集理由'] = ''
                 row_data['检索是否正确'] = ''
-                row_data['检索判断类型'] = ''
-                row_data['检索原因'] = ''
+                row_data['检索正误类型'] = ''
+                row_data['检索正误理由'] = ''
                 row_data['回复是否正确'] = ''
-                row_data['回复判断类型'] = ''
-                row_data['回复原因'] = ''
+                row_data['回复正误类型'] = ''
+                row_data['回复正误理由'] = ''
             
             excel_data.append(row_data)
     
     return excel_data
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="CKB QA Tool API",
-    description="Integrated batch processing and data analysis API",
-    version="1.0.0"
-)
+
+def update_progress_from_log(task_state: TaskState, task_id: str):
+    """Update progress from log files"""
+    try:
+        # Update batch progress
+        batch_progress = get_latest_progress(prefix="spark_api_tool", progress_type="SPARK_API_PROGRESS")
+        if batch_progress:
+            task_state.update_status(
+                batch_progress=batch_progress['percent'],
+                batch_status=TaskStatus.IN_PROGRESS if batch_progress['percent'] < 100 else TaskStatus.COMPLETED
+            )
+        
+        # Update norm progress
+        norm_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="NORM_ANALYSIS_PROGRESS")
+        if norm_progress:
+            task_state.update_status(
+                norm_progress=norm_progress['percent'],
+                norm_status=TaskStatus.IN_PROGRESS if norm_progress['percent'] < 100 else TaskStatus.COMPLETED
+            )
+        
+        # Update set progress
+        set_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="SET_ANALYSIS_PROGRESS")
+        if set_progress:
+            task_state.update_status(
+                set_progress=set_progress['percent'],
+                set_status=TaskStatus.IN_PROGRESS if set_progress['percent'] < 100 else TaskStatus.COMPLETED
+            )
+        
+        # Update recall progress
+        recall_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="RECALL_ANALYSIS_PROGRESS")
+        if recall_progress:
+            task_state.update_status(
+                recall_progress=recall_progress['percent'],
+                recall_status=TaskStatus.IN_PROGRESS if recall_progress['percent'] < 100 else TaskStatus.COMPLETED
+            )
+        
+        # Update reply progress
+        reply_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="REPLY_ANALYSIS_PROGRESS")
+        if reply_progress:
+            task_state.update_status(
+                reply_progress=reply_progress['percent'],
+                reply_status=TaskStatus.IN_PROGRESS if reply_progress['percent'] < 100 else TaskStatus.COMPLETED
+            )
+    except Exception as e:
+        logger.warning(f"Failed to update progress from log: {e}")
 
 
-class ProcessingRequest(BaseModel):
-    """Request model for batch processing and data analysis"""
-    # Required parameters
-    file_path: str = Field(..., description="Input Excel file path")
-    query_selected: bool = Field(True, description="Whether to use query field (must be true)")
-    
-    # Optional field selections
-    chunk_selected: bool = Field(True, description="Whether to use correct source field")
-    answer_selected: bool = Field(True, description="Whether to use correct answer field")
-    
-    # Analysis module switches
-    problem_analysis: bool = Field(True, description="Enable problem-side analysis")
-    norm_analysis: bool = Field(True, description="Enable normativity analysis (requires problem_analysis)")
-    set_analysis: bool = Field(True, description="Enable in/out set analysis (requires problem_analysis)")
-    recall_analysis: bool = Field(True, description="Enable recall-side analysis")
-    reply_analysis: bool = Field(True, description="Enable reply-side analysis")
-    
-    # Optional configuration
-    scene_config_file: Opt[str] = Field(
-        default=r"data\scene_config.xlsx",
-        description="Scene configuration file (required if set_analysis=true)"
-    )
-    parallel_execution: bool = Field(True, description="Use parallel execution for analysis")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "file_path": "data/test_examples.xlsx",
-                "query_selected": True,
-                "chunk_selected": True,
-                "answer_selected": True,
-                "problem_analysis": True,
-                "norm_analysis": True,
-                "set_analysis": True,
-                "recall_analysis": True,
-                "reply_analysis": True,
-                "scene_config_file": "data/scene_config.xlsx",
-                "parallel_execution": True
-            }
-        }
-
-
-class ProcessingResponse(BaseModel):
-    """Response model for batch processing and data analysis"""
-    success: bool
-    code: str
-    message: str
-    output_file: Opt[str] = None
-    intermediate_file: Opt[str] = None
-    total_groups: Opt[int] = None
-    total_records: Opt[int] = None
-    analysis_results_count: Opt[int] = None
-
-
-async def process_integrated_workflow(
+async def execute_workflow(
+    task_state: TaskState,
     file_path: str,
     query_selected: bool,
     chunk_selected: bool,
@@ -349,120 +567,87 @@ async def process_integrated_workflow(
     reply_analysis: bool,
     scene_config_file: str,
     parallel_execution: bool
-) -> dict:
+):
     """
-    Execute integrated batch processing and data analysis workflow
-    
-    This function is extracted from main.py's main() function to be used by API
+    Execute the integrated workflow with progress tracking and cancellation support
     """
     try:
         # Validate required parameters
         if not query_selected:
-            logger.error("query_selected must be True")
-            return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
+            raise ValueError("query_selected must be True")
         
-        if not file_path:
-            logger.error("file_path is required")
-            return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
-        
-        if not os.path.exists(file_path):
-            logger.error(f"Input file not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        
-        logger.info(f"Starting integrated batch processing and analysis")
-        logger.info(f"Input file: {file_path}")
-        logger.info(f"Analysis parameters:")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - chunk_selected: {chunk_selected}")
-        logger.info(f"  - answer_selected: {answer_selected}")
-        logger.info(f"  - scene_config_file: {scene_config_file}")
+        if not file_path or not os.path.exists(file_path):
+            raise ValueError(f"Input file not found: {file_path}")
         
         # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
         if norm_analysis or set_analysis:
             problem_analysis = True
-            logger.info("Auto-enabled problem_analysis because norm_analysis or set_analysis is enabled")
         
-        # Step 1: Read input file for batch processing
-        logger.info("Step 1: Reading input file for batch processing...")
-        try:
-            batch_handler = BatchExcelHandler(file_path)
-            batch_groups = batch_handler.read_data()
-        except FileNotFoundError:
-            logger.error(f"File not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        except Exception as e:
-            logger.error(f"Failed to read input file: {e}")
-            return create_response(False, ErrorCode.FILE_READ_ERROR, str(e))
+        # Step 1: Batch Processing (30% weight)
+        task_state.update_status(batch_status=TaskStatus.IN_PROGRESS, batch_progress=0.0)
+        
+        if task_state.is_cancelled():
+            task_state.update_status(batch_status=TaskStatus.CANCELLED)
+            return
+        
+        logger.info(f"[Task-{task_state.task_id}] Step 1: Reading input file for batch processing...")
+        batch_handler = BatchExcelHandler(file_path)
+        batch_groups = batch_handler.read_data()
         
         if not batch_groups:
-            logger.warning("No conversation groups found in input file")
-            return create_response(False, ErrorCode.DATA_NO_GROUPS)
+            raise ValueError("No conversation groups found in input file")
         
-        logger.info(f"Read {len(batch_groups)} conversation groups from input file")
+        logger.info(f"[Task-{task_state.task_id}] Read {len(batch_groups)} conversation groups")
         
-        # Step 2: Perform batch processing (CKB QA) - must complete first
-        logger.info("Step 2: Starting batch processing (CKB QA)...")
+        # Perform batch processing
+        logger.info(f"[Task-{task_state.task_id}] Step 2: Starting batch processing (CKB QA)...")
+        
+        # Check cancellation during batch processing (periodic check)
+        # Note: process_batch is async, so we can't interrupt it easily
+        # But we can check before and after
+        processed_groups = await process_batch(batch_groups)
+        
+        if task_state.is_cancelled():
+            task_state.update_status(batch_status=TaskStatus.CANCELLED)
+            return
+        
+        task_state.update_status(batch_status=TaskStatus.COMPLETED, batch_progress=100.0)
+        logger.info(f"[Task-{task_state.task_id}] Batch processing completed: {len(processed_groups)} groups")
+        
+        # Update progress from log
+        update_progress_from_log(task_state, task_state.task_id)
+        
+        # Save intermediate batch results
+        input_path = Path(file_path)
+        output_dir = input_path.parent / 'data'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        intermediate_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
+        
         try:
-            processed_groups = await process_batch(batch_groups)
+            batch_handler.write_results(processed_groups, intermediate_file)
+            task_state.update_status(intermediate_file=intermediate_file)
         except Exception as e:
-            logger.error(f"Batch processing failed: {e}", exc_info=True)
-            return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
+            logger.warning(f"Failed to save intermediate batch results: {e}")
         
-        logger.info(f"Batch processing completed: {len(processed_groups)} groups processed")
-        
-        # Step 3: Save batch processing results (intermediate output)
-        intermediate_output_file = None
-        logger.info("Step 3: Saving batch processing results...")
-        try:
-            # Generate intermediate output file path
-            input_path = Path(file_path)
-            output_dir = input_path.parent / 'data'
-            output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            intermediate_output_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
-            
-            # Save batch processing results
-            batch_handler.write_results(processed_groups, intermediate_output_file)
-            logger.info(f"Batch processing results saved to: {intermediate_output_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save intermediate batch results: {e}, continuing with analysis")
-        
-        # Step 4: Convert batch results to analysis inputs
-        logger.info("Step 4: Converting batch results to analysis format...")
-        analysis_inputs = convert_batch_results_to_analysis_inputs(
-            processed_groups,
-            chunk_selected=chunk_selected,
-            answer_selected=answer_selected
-        )
-        
-        if not analysis_inputs:
-            logger.warning("No valid data for analysis")
-            return create_response(False, ErrorCode.DATA_NO_VALID_RECORDS)
-        
-        logger.info(f"Converted {len(analysis_inputs)} records for analysis")
-        
-        # Step 5: Perform data analysis on batch processing results (if any analysis is enabled)
-        analysis_results = []
+        # Step 2: Data Analysis
         any_analysis_enabled = problem_analysis or norm_analysis or set_analysis or recall_analysis or reply_analysis
-        logger.info(f"Step 5: Checking analysis conditions...")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - Any analysis enabled: {any_analysis_enabled}")
         
         if any_analysis_enabled:
-            logger.info("Step 5: Starting data analysis on batch processing results...")
+            # Convert to analysis inputs
+            analysis_inputs = convert_batch_results_to_analysis_inputs(
+                processed_groups,
+                chunk_selected=chunk_selected,
+                answer_selected=answer_selected
+            )
             
-            # Create analysis config with all enabled analysis modules
+            if not analysis_inputs:
+                raise ValueError("No valid data for analysis")
+            
+            # Create analysis config
             analysis_config = AnalysisConfig(
                 query_selected=query_selected,
-                file_path=file_path,  # Not used for analysis, but required
+                file_path=file_path,
                 chunk_selected=chunk_selected,
                 answer_selected=answer_selected,
                 problem_analysis=problem_analysis,
@@ -474,95 +659,90 @@ async def process_integrated_workflow(
                 parallel_execution=parallel_execution
             )
             
-            # Validate analysis config
+            # Validate config
             is_valid, error_msg = analysis_config.validate()
             if not is_valid:
-                logger.error(f"Analysis configuration validation failed: {error_msg}")
-                if "querySelected" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
-                elif "norm_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_NORM_REQUIRES_PROBLEM)
-                elif "set_analysis" in error_msg and "problem_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_PROBLEM)
-                elif "scene_config_file" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_SCENE)
-                else:
-                    return create_response(False, ErrorCode.CONFIG_INVALID, error_msg)
+                raise ValueError(f"Analysis configuration validation failed: {error_msg}")
             
             # Create analysis tool
-            try:
-                analysis_tool = DataAnalysisTool(analysis_config)
-            except Exception as e:
-                logger.error(f"Failed to initialize analysis tool: {e}", exc_info=True)
-                return create_response(False, ErrorCode.SYSTEM_EXCEPTION, f"Tool initialization: {str(e)}")
+            analysis_tool = DataAnalysisTool(analysis_config)
+            
+            # Update status based on enabled analyses
+            if norm_analysis:
+                task_state.update_status(norm_status=TaskStatus.IN_PROGRESS, norm_progress=0.0)
+            else:
+                task_state.update_status(norm_status=TaskStatus.SKIPPED)
+            
+            if set_analysis:
+                task_state.update_status(set_status=TaskStatus.IN_PROGRESS, set_progress=0.0)
+            else:
+                task_state.update_status(set_status=TaskStatus.SKIPPED)
+            
+            if recall_analysis:
+                task_state.update_status(recall_status=TaskStatus.IN_PROGRESS, recall_progress=0.0)
+            else:
+                task_state.update_status(recall_status=TaskStatus.SKIPPED)
+            
+            if reply_analysis:
+                task_state.update_status(reply_status=TaskStatus.IN_PROGRESS, reply_progress=0.0)
+            else:
+                task_state.update_status(reply_status=TaskStatus.SKIPPED)
+            
+            if task_state.is_cancelled():
+                task_state.update_status(
+                    norm_status=TaskStatus.CANCELLED,
+                    set_status=TaskStatus.CANCELLED,
+                    recall_status=TaskStatus.CANCELLED,
+                    reply_status=TaskStatus.CANCELLED
+                )
+                return
             
             # Execute analysis
-            try:
-                if parallel_execution:
-                    logger.info("Using parallel execution mode for data analysis")
-                    analysis_results = await analysis_tool.analyze_parallel(analysis_inputs)
-                else:
-                    logger.info("Using sequential execution mode for data analysis")
-                    analysis_results = analysis_tool.analyze(analysis_inputs)
-            except Exception as e:
-                logger.error(f"Data analysis execution failed: {e}", exc_info=True)
-                return create_response(False, ErrorCode.ANALYSIS_TASK_FAILED, str(e))
+            logger.info(f"[Task-{task_state.task_id}] Step 3: Starting data analysis...")
             
-            logger.info(f"Data analysis completed: {len(analysis_results)} results")
-            if analysis_results:
-                # Log sample of analysis results for debugging
-                sample_result = analysis_results[0]
-                logger.info(f"Sample analysis result - Question: {sample_result.input_data.question[:50]}...")
-                logger.info(f"  - norm_analysis: {sample_result.norm_analysis is not None}")
-                logger.info(f"  - set_analysis: {sample_result.set_analysis is not None}")
-                logger.info(f"  - recall_analysis: {sample_result.recall_analysis is not None}")
-                logger.info(f"  - response_analysis: {sample_result.response_analysis is not None}")
+            # Execute analysis with periodic cancellation check
+            # Note: For better cancellation, we would need to modify the analysis tools
+            # to check cancellation flags periodically, but for now we check before/after
+            if parallel_execution:
+                analysis_results = await analysis_tool.analyze_parallel(analysis_inputs)
             else:
-                logger.warning("Analysis completed but returned empty results list!")
-        else:
-            logger.warning("Step 5: Skipping data analysis (no analysis modules enabled)")
-        
-        # Step 6: Merge batch processing results with analysis results
-        logger.info("Step 6: Merging batch processing results with analysis results...")
-        logger.info(f"Merging {len(processed_groups)} batch groups with {len(analysis_results)} analysis results")
-        
-        # Count tasks for logging
-        total_tasks = sum(len(group.get_tasks()) for group in processed_groups)
-        logger.info(f"Total tasks to merge: {total_tasks}")
-        
-        # Log sample questions for debugging
-        if processed_groups:
-            sample_group = processed_groups[0]
-            sample_tasks = sample_group.get_tasks()
-            if sample_tasks:
-                logger.info(f"Sample batch task question: {sample_tasks[0].question[:50]}...")
-        if analysis_results:
-            logger.info(f"Sample analysis result question: {analysis_results[0].input_data.question[:50]}...")
-        
-        # Step 7: Save final integrated results to Excel
-        logger.info("Step 7: Saving final integrated results to Excel...")
-        
-        # Convert to Excel format
-        excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
-        logger.info(f"Converted to Excel format: {len(excel_data)} rows")
-        
-        # Generate output file path
-        input_path = Path(file_path)
-        output_dir = input_path.parent / 'data'
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = str(output_dir / f"{input_path.stem}_integrated_result_{timestamp}.xlsx")
-        
-        # Save to Excel
-        try:
-            import pandas as pd
+                analysis_results = analysis_tool.analyze(analysis_inputs)
             
+            if task_state.is_cancelled():
+                task_state.update_status(
+                    norm_status=TaskStatus.CANCELLED,
+                    set_status=TaskStatus.CANCELLED,
+                    recall_status=TaskStatus.CANCELLED,
+                    reply_status=TaskStatus.CANCELLED
+                )
+                return
+            
+            # Update progress from log
+            update_progress_from_log(task_state, task_state.task_id)
+            
+            # Mark completed analyses
+            if norm_analysis:
+                task_state.update_status(norm_status=TaskStatus.COMPLETED, norm_progress=100.0)
+            if set_analysis:
+                task_state.update_status(set_status=TaskStatus.COMPLETED, set_progress=100.0)
+            if recall_analysis:
+                task_state.update_status(recall_status=TaskStatus.COMPLETED, recall_progress=100.0)
+            if reply_analysis:
+                task_state.update_status(reply_status=TaskStatus.COMPLETED, reply_progress=100.0)
+            
+            logger.info(f"[Task-{task_state.task_id}] Data analysis completed: {len(analysis_results)} results")
+            
+            # Step 3: Save Excel results
+            logger.info(f"[Task-{task_state.task_id}] Step 4: Saving integrated results to Excel...")
+            excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
+            
+            output_file = str(output_dir / f"{input_path.stem}_integrated_result_{timestamp}.xlsx")
+            
+            import pandas as pd
             df = pd.DataFrame(excel_data)
             
             # Define column order
-            # Determine max_sources from the actual data
             base_columns = ['对话ID', '问题', '参考溯源', '参考答案']
-            # Find max source column number from the data
             max_sources = 0
             for row in excel_data:
                 for col_name in row.keys():
@@ -573,48 +753,158 @@ async def process_integrated_workflow(
                                 max_sources = max(max_sources, int(num_str))
                         except:
                             pass
-            # If no sources found, use config default
             if max_sources == 0:
                 max_sources = config_manager.mission.knowledge_num
             source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
             result_columns = ['模型回复', 'RequestId', 'SessionId']
             analysis_columns = [
-                '是否规范', '问题类型', '问题原因',
-                '是否在集', '在集类型', '在集原因',
-                '检索是否正确', '检索判断类型', '检索原因',
-                '回复是否正确', '回复判断类型', '回复原因'
+                '问题是否规范', '问题（非）规范性类型', '问题（非）规范性理由',
+                '问题是否在集', '问题（非）在集类型', '问题（非）在集理由',
+                '检索是否正确', '检索正误类型', '检索正误理由',
+                '回复是否正确', '回复正误类型', '回复正误理由'
             ]
             column_order = base_columns + source_columns + result_columns + analysis_columns
             
-            # Reorder columns (only include columns that exist)
             existing_columns = [col for col in column_order if col in df.columns]
             df = df[existing_columns]
             
             df.to_excel(output_file, index=False, engine='openpyxl')
-            logger.info(f"Results saved to Excel: {output_file}")
-        except PermissionError:
-            logger.error("File is locked by another program")
-            return create_response(False, ErrorCode.FILE_LOCKED, output_file)
-        except Exception as e:
-            logger.error(f"Failed to save results: {e}")
-            return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
+            task_state.update_status(excel_file=output_file)
+            logger.info(f"[Task-{task_state.task_id}] Results saved to Excel: {output_file}")
+            
+            # Step 4: Metrics Analysis (10% weight)
+            if output_file and os.path.exists(output_file):
+                task_state.update_status(metrics_status=TaskStatus.IN_PROGRESS, metrics_progress=0.0)
+                
+                if task_state.is_cancelled():
+                    task_state.update_status(metrics_status=TaskStatus.CANCELLED)
+                    return
+                
+                logger.info(f"[Task-{task_state.task_id}] Step 5: Starting metrics analysis...")
+                metrics = analyze_metrics(
+                    file_path=output_file,
+                    norm_analysis=norm_analysis,
+                    set_analysis=set_analysis,
+                    recall_analysis=recall_analysis,
+                    reply_analysis=reply_analysis
+                )
+                
+                if task_state.is_cancelled():
+                    task_state.update_status(metrics_status=TaskStatus.CANCELLED)
+                    return
+                
+                if metrics:
+                    metrics_json_file = str(output_dir / f"{input_path.stem}_metrics_{timestamp}.json")
+                    with open(metrics_json_file, 'w', encoding='utf-8') as f:
+                        json.dump(metrics, f, indent=2, ensure_ascii=False)
+                    
+                    task_state.update_status(
+                        json_file=metrics_json_file,
+                        metrics_status=TaskStatus.COMPLETED,
+                        metrics_progress=100.0
+                    )
+                    logger.info(f"[Task-{task_state.task_id}] Metrics analysis completed: {metrics_json_file}")
+                else:
+                    task_state.update_status(metrics_status=TaskStatus.SKIPPED)
+        else:
+            # No analysis enabled, skip to save batch results only
+            logger.info(f"[Task-{task_state.task_id}] No analysis enabled, skipping data analysis")
+            task_state.update_status(
+                norm_status=TaskStatus.SKIPPED,
+                set_status=TaskStatus.SKIPPED,
+                recall_status=TaskStatus.SKIPPED,
+                reply_status=TaskStatus.SKIPPED,
+                metrics_status=TaskStatus.SKIPPED
+            )
+            
+            # Save batch results as final output
+            output_file = intermediate_file
+            task_state.update_status(excel_file=output_file)
         
-        logger.info("Integrated batch processing and analysis completed successfully!")
+        logger.info(f"[Task-{task_state.task_id}] Workflow completed successfully!")
         
-        # Return success response with additional information
-        response = create_response(True)
-        response['output_file'] = output_file
-        response['intermediate_file'] = intermediate_output_file
-        response['total_groups'] = len(processed_groups)
-        response['total_records'] = total_tasks
-        response['analysis_results_count'] = len(analysis_results)
-        
-        return response
-        
+    except asyncio.CancelledError:
+        logger.info(f"[Task-{task_state.task_id}] Workflow cancelled")
+        task_state.update_status(error_message="Task cancelled by user")
     except Exception as e:
-        logger.error(f"Integrated processing failed with unexpected error: {e}", exc_info=True)
-        return create_response(False, ErrorCode.SYSTEM_EXCEPTION, str(e))
+        logger.error(f"[Task-{task_state.task_id}] Workflow failed: {e}", exc_info=True)
+        task_state.update_status(error_message=str(e))
 
+
+# ============================================================================
+# FastAPI Application
+# ============================================================================
+
+app = FastAPI(
+    title="CKB QA Tool API",
+    description="Integrated batch processing, data analysis, and metrics analysis API",
+    version="1.0.0"
+)
+
+
+# ============================================================================
+# Request/Response Models
+# ============================================================================
+
+class StartRequest(BaseModel):
+    """Request model for starting a task"""
+    task_id: str = Field(..., description="Unique task identifier")
+    file_path: str = Field(..., description="Input Excel file path")
+    query_selected: bool = Field(True, description="Whether to use query field (must be true)")
+    chunk_selected: bool = Field(True, description="Whether to use correct source field")
+    answer_selected: bool = Field(True, description="Whether to use correct answer field")
+    problem_analysis: bool = Field(True, description="Enable problem-side analysis")
+    norm_analysis: bool = Field(True, description="Enable normativity analysis")
+    set_analysis: bool = Field(True, description="Enable in/out set analysis")
+    recall_analysis: bool = Field(True, description="Enable recall-side analysis")
+    reply_analysis: bool = Field(True, description="Enable reply-side analysis")
+    scene_config_file: Opt[str] = Field(
+        default=r"data\scene_config.xlsx",
+        description="Scene configuration file"
+    )
+    parallel_execution: bool = Field(True, description="Use parallel execution")
+
+
+class StartResponse(BaseModel):
+    """Response model for start endpoint"""
+    success: bool
+    message: str
+    task_id: str
+
+
+class StatusResponse(BaseModel):
+    """Response model for status endpoint"""
+    task_id: str
+    total_progress: float
+    status: Dict[str, str]
+    progress: Dict[str, float]
+    files: Dict[str, Opt[str]]
+    error_message: Opt[str] = None
+    created_at: str
+    updated_at: str
+    cancelled: bool
+
+
+class DownloadResponse(BaseModel):
+    """Response model for download endpoint"""
+    success: bool
+    message: str
+    excel_file: Opt[str] = None
+    json_file: Opt[str] = None
+
+
+class InterruptResponse(BaseModel):
+    """Response model for interrupt endpoint"""
+    success: bool
+    message: str
+    excel_file: Opt[str] = None
+    json_file: Opt[str] = None
+    intermediate_file: Opt[str] = None
+
+
+# ============================================================================
+# API Endpoints
+# ============================================================================
 
 @app.get("/")
 async def root():
@@ -623,7 +913,10 @@ async def root():
         "message": "CKB QA Tool API",
         "version": "1.0.0",
         "endpoints": {
-            "/process": "POST - Process batch and perform data analysis",
+            "/start": "POST - Start integrated workflow",
+            "/status/{task_id}": "GET - Get task status and progress",
+            "/download/{task_id}": "GET - Download result files",
+            "/interrupt/{task_id}": "POST - Interrupt running task",
             "/health": "GET - Health check"
         }
     }
@@ -638,1424 +931,41 @@ async def health_check():
     }
 
 
-@app.post("/process", response_model=ProcessingResponse)
-async def process_batch_and_analysis(request: ProcessingRequest):
+@app.post("/start", response_model=StartResponse)
+async def start_task(request: StartRequest, background_tasks: BackgroundTasks):
     """
-    Process batch and perform data analysis
-    
-    This endpoint accepts parameters and executes the integrated workflow:
-    1. Batch processing (CKB QA) based on questions from input file
-    2. Data analysis (problem-side, recall-side, reply-side) based on parameters
-    3. Save integrated results to Excel file
-    
-    Returns:
-        ProcessingResponse with success status, output file path, and statistics
-    """
-    try:
-        logger.info(f"Received processing request: file_path={request.file_path}")
-        
-        # Execute integrated workflow
-        result = await process_integrated_workflow(
-            file_path=request.file_path,
-            query_selected=request.query_selected,
-            chunk_selected=request.chunk_selected,
-            answer_selected=request.answer_selected,
-            problem_analysis=request.problem_analysis,
-            norm_analysis=request.norm_analysis,
-            set_analysis=request.set_analysis,
-            recall_analysis=request.recall_analysis,
-            reply_analysis=request.reply_analysis,
-            scene_config_file=request.scene_config_file,
-            parallel_execution=request.parallel_execution
-        )
-        
-        # Convert to ProcessingResponse
-        response = ProcessingResponse(
-            success=result.get('success', False),
-            code=result.get('code', ''),
-            message=result.get('message', ''),
-            output_file=result.get('output_file'),
-            intermediate_file=result.get('intermediate_file'),
-            total_groups=result.get('total_groups'),
-            total_records=result.get('total_records'),
-            analysis_results_count=result.get('analysis_results_count')
-        )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"API endpoint error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
-
-FastAPI application for integrated batch processing and data analysis
-"""
-import asyncio
-import sys
-import os
-from pathlib import Path
-from typing import Optional
-from datetime import datetime
-
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
-
-# Setup root logging first - this must be done before importing other modules
-from conf.logging import setup_root_logging
-setup_root_logging(
-    log_dir="log",
-    console_level="INFO",
-    file_level="DEBUG",
-    root_level="DEBUG",
-    use_timestamp=True,
-    log_filename_prefix="ckb_qa_tool_api"
-)
-
-# Import logging module for use in this file
-import logging
-logger = logging.getLogger(__name__)
-
-# Import FastAPI and related modules
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import Optional as Opt
-
-# Import batch processing and data analysis modules
-from spark_api_tool.main import process_batch
-from spark_api_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
-from spark_api_tool.config import config_manager
-
-# Import data analysis modules
-from data_analysis_tool.main import DataAnalysisTool
-from data_analysis_tool.config import AnalysisConfig
-from data_analysis_tool.models import AnalysisInput, AnalysisResult
-
-# Import error handling
-from conf.error_codes import ErrorCode, create_response
-
-# Helper functions (copied from main.py to avoid circular imports)
-def convert_batch_results_to_analysis_inputs(
-    batch_groups: list[ConversationGroup],
-    chunk_selected: bool = False,
-    answer_selected: bool = False
-) -> list[AnalysisInput]:
-    """
-    Convert batch processing results to analysis input format
+    Start integrated workflow: batch processing → data analysis → metrics analysis
     
     Args:
-        batch_groups: List of ConversationGroup from batch processing
-        chunk_selected: Whether correct source is available
-        answer_selected: Whether correct answer is available
-        
+        request: Start request with task_id and parameters
+        background_tasks: FastAPI background tasks
+    
     Returns:
-        List of AnalysisInput objects
-    """
-    analysis_inputs = []
-    
-    for group in batch_groups:
-        for task in group.get_tasks():
-            # Extract question (required)
-            question = task.question if task.question else ""
-            if not question:
-                continue
-            
-            # Extract correct source (if available)
-            correct_source = None
-            if chunk_selected:
-                correct_source = task.correct_source if task.correct_source else None
-            
-            # Extract correct answer (if available)
-            correct_answer = None
-            if answer_selected:
-                correct_answer = task.correct_answer if task.correct_answer else None
-            
-            # Extract sources (retrieval results from batch processing)
-            sources = task.sources if task.sources else []
-            
-            # Extract model response
-            model_response = task.model_response if task.model_response else None
-            
-            analysis_inputs.append(AnalysisInput(
-                question=question,
-                correct_answer=correct_answer,
-                correct_source=correct_source,
-                sources=sources,
-                model_response=model_response
-            ))
-    
-    return analysis_inputs
-
-
-def convert_analysis_results_to_excel_data(
-    batch_groups: list[ConversationGroup],
-    analysis_results: list[AnalysisResult],
-    input_file_path: Optional[str] = None
-) -> list[dict]:
-    """
-    Convert batch processing results and analysis results to Excel format
-    
-    Args:
-        batch_groups: List of ConversationGroup from batch processing
-        analysis_results: List of AnalysisResult from data analysis
-        input_file_path: Optional input file path to detect source column count
-        
-    Returns:
-        List of dictionaries for Excel output
-    """
-    excel_data = []
-    
-    # Create a mapping from question to analysis result
-    # Use stripped question as key to handle whitespace differences
-    analysis_map = {}
-    for result in analysis_results:
-        question = result.input_data.question
-        if question:
-            # Normalize question by stripping whitespace for matching
-            normalized_question = question.strip()
-            analysis_map[normalized_question] = result
-            # Also store original question as key for exact match
-            analysis_map[question] = result
-    
-    logger.info(f"Created analysis map with {len(analysis_map)} entries from {len(analysis_results)} analysis results")
-    
-    # Determine maximum number of source columns
-    # 1. Check from batch processing results
-    max_sources_from_batch = 0
-    for group in batch_groups:
-        for task in group.get_tasks():
-            if task.sources:
-                max_sources_from_batch = max(max_sources_from_batch, len(task.sources))
-    
-    # 2. Check from analysis results
-    max_sources_from_analysis = 0
-    for result in analysis_results:
-        if result.input_data.sources:
-            max_sources_from_analysis = max(max_sources_from_analysis, len(result.input_data.sources))
-    
-    # 3. Check from input file if provided
-    max_sources_from_input = 0
-    if input_file_path and os.path.exists(input_file_path):
-        try:
-            import pandas as pd
-            input_df = pd.read_excel(input_file_path, sheet_name='Sheet1')
-            for col in input_df.columns:
-                if str(col).startswith('溯源'):
-                    try:
-                        num_str = str(col).replace('溯源', '').strip()
-                        if num_str.isdigit():
-                            max_sources_from_input = max(max_sources_from_input, int(num_str))
-                    except:
-                        pass
-        except Exception as e:
-            logger.warning(f"Failed to read input file for source column detection: {e}")
-    
-    # Use the maximum of all sources
-    max_sources = max(
-        config_manager.mission.knowledge_num,  # From config
-        max_sources_from_batch,  # From batch processing results
-        max_sources_from_analysis,  # From analysis results
-        max_sources_from_input  # From input file
-    )
-    logger.info(f"Using {max_sources} source columns (from config: {config_manager.mission.knowledge_num}, "
-                f"from batch: {max_sources_from_batch}, from analysis: {max_sources_from_analysis}, "
-                f"from input: {max_sources_from_input})")
-    
-    # Process batch groups and merge with analysis results
-    for group in batch_groups:
-        for task in group.get_tasks():
-            row_data = {}
-            
-            # Basic fields from batch processing
-            row_data['对话ID'] = group.conversation_id if group.conversation_id else ''
-            row_data['问题'] = task.question if task.question else ''
-            row_data['参考溯源'] = task.correct_source if task.correct_source else ''
-            row_data['参考答案'] = task.correct_answer if task.correct_answer else ''
-            
-            # Source fields (溯源1, 溯源2, ...) - dynamic based on max_sources
-            for i in range(1, max_sources + 1):
-                if task.sources and i <= len(task.sources):
-                    row_data[f'溯源{i}'] = task.sources[i - 1] if task.sources[i - 1] else ''
-                else:
-                    row_data[f'溯源{i}'] = ''
-            
-            # Model response and IDs
-            row_data['模型回复'] = task.model_response if task.model_response else ''
-            row_data['RequestId'] = task.request_id if task.request_id else ''
-            row_data['SessionId'] = task.session_id if task.session_id else ''
-            
-            # Analysis results (if available)
-            # Try exact match first, then normalized match
-            analysis_result = analysis_map.get(task.question)
-            if not analysis_result and task.question:
-                normalized_question = task.question.strip()
-                analysis_result = analysis_map.get(normalized_question)
-            
-            if analysis_result:
-                # Norm analysis results (problem-side normativity analysis)
-                if analysis_result.norm_analysis:
-                    row_data['是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
-                    row_data['问题类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
-                    row_data['问题原因'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
-                else:
-                    row_data['是否规范'] = ''
-                    row_data['问题类型'] = ''
-                    row_data['问题原因'] = ''
-                
-                # Set analysis results
-                if analysis_result.set_analysis:
-                    row_data['是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
-                    row_data['在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
-                    row_data['在集原因'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
-                else:
-                    row_data['是否在集'] = ''
-                    row_data['在集类型'] = ''
-                    row_data['在集原因'] = ''
-                
-                # Recall analysis results
-                if analysis_result.recall_analysis:
-                    if analysis_result.recall_analysis.is_retrieval_correct is not None:
-                        row_data['检索是否正确'] = analysis_result.recall_analysis.is_retrieval_correct
-                        row_data['检索判断类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
-                        row_data['检索原因'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
-                    else:
-                        row_data['检索是否正确'] = ''
-                        row_data['检索判断类型'] = ''
-                        row_data['检索原因'] = ''
-                else:
-                    row_data['检索是否正确'] = ''
-                    row_data['检索判断类型'] = ''
-                    row_data['检索原因'] = ''
-                
-                # Response analysis results
-                if analysis_result.response_analysis:
-                    if analysis_result.response_analysis.is_response_correct is not None:
-                        row_data['回复是否正确'] = analysis_result.response_analysis.is_response_correct
-                        row_data['回复判断类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
-                        row_data['回复原因'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
-                    else:
-                        row_data['回复是否正确'] = ''
-                        row_data['回复判断类型'] = ''
-                        row_data['回复原因'] = ''
-                else:
-                    row_data['回复是否正确'] = ''
-                    row_data['回复判断类型'] = ''
-                    row_data['回复原因'] = ''
-            else:
-                # No analysis result, fill with empty values
-                row_data['是否规范'] = ''
-                row_data['问题类型'] = ''
-                row_data['问题原因'] = ''
-                row_data['是否在集'] = ''
-                row_data['在集类型'] = ''
-                row_data['在集原因'] = ''
-                row_data['检索是否正确'] = ''
-                row_data['检索判断类型'] = ''
-                row_data['检索原因'] = ''
-                row_data['回复是否正确'] = ''
-                row_data['回复判断类型'] = ''
-                row_data['回复原因'] = ''
-            
-            excel_data.append(row_data)
-    
-    return excel_data
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="CKB QA Tool API",
-    description="Integrated batch processing and data analysis API",
-    version="1.0.0"
-)
-
-
-class ProcessingRequest(BaseModel):
-    """Request model for batch processing and data analysis"""
-    # Required parameters
-    file_path: str = Field(..., description="Input Excel file path")
-    query_selected: bool = Field(True, description="Whether to use query field (must be true)")
-    
-    # Optional field selections
-    chunk_selected: bool = Field(True, description="Whether to use correct source field")
-    answer_selected: bool = Field(True, description="Whether to use correct answer field")
-    
-    # Analysis module switches
-    problem_analysis: bool = Field(True, description="Enable problem-side analysis")
-    norm_analysis: bool = Field(True, description="Enable normativity analysis (requires problem_analysis)")
-    set_analysis: bool = Field(True, description="Enable in/out set analysis (requires problem_analysis)")
-    recall_analysis: bool = Field(True, description="Enable recall-side analysis")
-    reply_analysis: bool = Field(True, description="Enable reply-side analysis")
-    
-    # Optional configuration
-    scene_config_file: Opt[str] = Field(
-        default=r"data\scene_config.xlsx",
-        description="Scene configuration file (required if set_analysis=true)"
-    )
-    parallel_execution: bool = Field(True, description="Use parallel execution for analysis")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "file_path": "data/test_examples.xlsx",
-                "query_selected": True,
-                "chunk_selected": True,
-                "answer_selected": True,
-                "problem_analysis": True,
-                "norm_analysis": True,
-                "set_analysis": True,
-                "recall_analysis": True,
-                "reply_analysis": True,
-                "scene_config_file": "data/scene_config.xlsx",
-                "parallel_execution": True
-            }
-        }
-
-
-class ProcessingResponse(BaseModel):
-    """Response model for batch processing and data analysis"""
-    success: bool
-    code: str
-    message: str
-    output_file: Opt[str] = None
-    intermediate_file: Opt[str] = None
-    total_groups: Opt[int] = None
-    total_records: Opt[int] = None
-    analysis_results_count: Opt[int] = None
-
-
-async def process_integrated_workflow(
-    file_path: str,
-    query_selected: bool,
-    chunk_selected: bool,
-    answer_selected: bool,
-    problem_analysis: bool,
-    norm_analysis: bool,
-    set_analysis: bool,
-    recall_analysis: bool,
-    reply_analysis: bool,
-    scene_config_file: str,
-    parallel_execution: bool
-) -> dict:
-    """
-    Execute integrated batch processing and data analysis workflow
-    
-    This function is extracted from main.py's main() function to be used by API
+        StartResponse with task_id
     """
     try:
-        # Validate required parameters
-        if not query_selected:
-            logger.error("query_selected must be True")
-            return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
-        
-        if not file_path:
-            logger.error("file_path is required")
-            return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
-        
-        if not os.path.exists(file_path):
-            logger.error(f"Input file not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        
-        logger.info(f"Starting integrated batch processing and analysis")
-        logger.info(f"Input file: {file_path}")
-        logger.info(f"Analysis parameters:")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - chunk_selected: {chunk_selected}")
-        logger.info(f"  - answer_selected: {answer_selected}")
-        logger.info(f"  - scene_config_file: {scene_config_file}")
-        
-        # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
-        if norm_analysis or set_analysis:
-            problem_analysis = True
-            logger.info("Auto-enabled problem_analysis because norm_analysis or set_analysis is enabled")
-        
-        # Step 1: Read input file for batch processing
-        logger.info("Step 1: Reading input file for batch processing...")
-        try:
-            batch_handler = BatchExcelHandler(file_path)
-            batch_groups = batch_handler.read_data()
-        except FileNotFoundError:
-            logger.error(f"File not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        except Exception as e:
-            logger.error(f"Failed to read input file: {e}")
-            return create_response(False, ErrorCode.FILE_READ_ERROR, str(e))
-        
-        if not batch_groups:
-            logger.warning("No conversation groups found in input file")
-            return create_response(False, ErrorCode.DATA_NO_GROUPS)
-        
-        logger.info(f"Read {len(batch_groups)} conversation groups from input file")
-        
-        # Step 2: Perform batch processing (CKB QA) - must complete first
-        logger.info("Step 2: Starting batch processing (CKB QA)...")
-        try:
-            processed_groups = await process_batch(batch_groups)
-        except Exception as e:
-            logger.error(f"Batch processing failed: {e}", exc_info=True)
-            return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
-        
-        logger.info(f"Batch processing completed: {len(processed_groups)} groups processed")
-        
-        # Step 3: Save batch processing results (intermediate output)
-        intermediate_output_file = None
-        logger.info("Step 3: Saving batch processing results...")
-        try:
-            # Generate intermediate output file path
-            input_path = Path(file_path)
-            output_dir = input_path.parent / 'data'
-            output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            intermediate_output_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
-            
-            # Save batch processing results
-            batch_handler.write_results(processed_groups, intermediate_output_file)
-            logger.info(f"Batch processing results saved to: {intermediate_output_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save intermediate batch results: {e}, continuing with analysis")
-        
-        # Step 4: Convert batch results to analysis inputs
-        logger.info("Step 4: Converting batch results to analysis format...")
-        analysis_inputs = convert_batch_results_to_analysis_inputs(
-            processed_groups,
-            chunk_selected=chunk_selected,
-            answer_selected=answer_selected
-        )
-        
-        if not analysis_inputs:
-            logger.warning("No valid data for analysis")
-            return create_response(False, ErrorCode.DATA_NO_VALID_RECORDS)
-        
-        logger.info(f"Converted {len(analysis_inputs)} records for analysis")
-        
-        # Step 5: Perform data analysis on batch processing results (if any analysis is enabled)
-        analysis_results = []
-        any_analysis_enabled = problem_analysis or norm_analysis or set_analysis or recall_analysis or reply_analysis
-        logger.info(f"Step 5: Checking analysis conditions...")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - Any analysis enabled: {any_analysis_enabled}")
-        
-        if any_analysis_enabled:
-            logger.info("Step 5: Starting data analysis on batch processing results...")
-            
-            # Create analysis config with all enabled analysis modules
-            analysis_config = AnalysisConfig(
-                query_selected=query_selected,
-                file_path=file_path,  # Not used for analysis, but required
-                chunk_selected=chunk_selected,
-                answer_selected=answer_selected,
-                problem_analysis=problem_analysis,
-                norm_analysis=norm_analysis,
-                set_analysis=set_analysis,
-                recall_analysis=recall_analysis,
-                reply_analysis=reply_analysis,
-                scene_config_file=scene_config_file,
-                parallel_execution=parallel_execution
+        # Check if task_id already exists
+        existing_task = get_task_state(request.task_id)
+        if existing_task:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task {request.task_id} already exists"
             )
-            
-            # Validate analysis config
-            is_valid, error_msg = analysis_config.validate()
-            if not is_valid:
-                logger.error(f"Analysis configuration validation failed: {error_msg}")
-                if "querySelected" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
-                elif "norm_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_NORM_REQUIRES_PROBLEM)
-                elif "set_analysis" in error_msg and "problem_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_PROBLEM)
-                elif "scene_config_file" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_SCENE)
-                else:
-                    return create_response(False, ErrorCode.CONFIG_INVALID, error_msg)
-            
-            # Create analysis tool
-            try:
-                analysis_tool = DataAnalysisTool(analysis_config)
-            except Exception as e:
-                logger.error(f"Failed to initialize analysis tool: {e}", exc_info=True)
-                return create_response(False, ErrorCode.SYSTEM_EXCEPTION, f"Tool initialization: {str(e)}")
-            
-            # Execute analysis
-            try:
-                if parallel_execution:
-                    logger.info("Using parallel execution mode for data analysis")
-                    analysis_results = await analysis_tool.analyze_parallel(analysis_inputs)
-                else:
-                    logger.info("Using sequential execution mode for data analysis")
-                    analysis_results = analysis_tool.analyze(analysis_inputs)
-            except Exception as e:
-                logger.error(f"Data analysis execution failed: {e}", exc_info=True)
-                return create_response(False, ErrorCode.ANALYSIS_TASK_FAILED, str(e))
-            
-            logger.info(f"Data analysis completed: {len(analysis_results)} results")
-            if analysis_results:
-                # Log sample of analysis results for debugging
-                sample_result = analysis_results[0]
-                logger.info(f"Sample analysis result - Question: {sample_result.input_data.question[:50]}...")
-                logger.info(f"  - norm_analysis: {sample_result.norm_analysis is not None}")
-                logger.info(f"  - set_analysis: {sample_result.set_analysis is not None}")
-                logger.info(f"  - recall_analysis: {sample_result.recall_analysis is not None}")
-                logger.info(f"  - response_analysis: {sample_result.response_analysis is not None}")
-            else:
-                logger.warning("Analysis completed but returned empty results list!")
-        else:
-            logger.warning("Step 5: Skipping data analysis (no analysis modules enabled)")
         
-        # Step 6: Merge batch processing results with analysis results
-        logger.info("Step 6: Merging batch processing results with analysis results...")
-        logger.info(f"Merging {len(processed_groups)} batch groups with {len(analysis_results)} analysis results")
-        
-        # Count tasks for logging
-        total_tasks = sum(len(group.get_tasks()) for group in processed_groups)
-        logger.info(f"Total tasks to merge: {total_tasks}")
-        
-        # Log sample questions for debugging
-        if processed_groups:
-            sample_group = processed_groups[0]
-            sample_tasks = sample_group.get_tasks()
-            if sample_tasks:
-                logger.info(f"Sample batch task question: {sample_tasks[0].question[:50]}...")
-        if analysis_results:
-            logger.info(f"Sample analysis result question: {analysis_results[0].input_data.question[:50]}...")
-        
-        # Step 7: Save final integrated results to Excel
-        logger.info("Step 7: Saving final integrated results to Excel...")
-        
-        # Convert to Excel format
-        excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
-        logger.info(f"Converted to Excel format: {len(excel_data)} rows")
-        
-        # Generate output file path
-        input_path = Path(file_path)
-        output_dir = input_path.parent / 'data'
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = str(output_dir / f"{input_path.stem}_integrated_result_{timestamp}.xlsx")
-        
-        # Save to Excel
-        try:
-            import pandas as pd
-            
-            df = pd.DataFrame(excel_data)
-            
-            # Define column order
-            # Determine max_sources from the actual data
-            base_columns = ['对话ID', '问题', '参考溯源', '参考答案']
-            # Find max source column number from the data
-            max_sources = 0
-            for row in excel_data:
-                for col_name in row.keys():
-                    if str(col_name).startswith('溯源'):
-                        try:
-                            num_str = str(col_name).replace('溯源', '').strip()
-                            if num_str.isdigit():
-                                max_sources = max(max_sources, int(num_str))
-                        except:
-                            pass
-            # If no sources found, use config default
-            if max_sources == 0:
-                max_sources = config_manager.mission.knowledge_num
-            source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
-            result_columns = ['模型回复', 'RequestId', 'SessionId']
-            analysis_columns = [
-                '是否规范', '问题类型', '问题原因',
-                '是否在集', '在集类型', '在集原因',
-                '检索是否正确', '检索判断类型', '检索原因',
-                '回复是否正确', '回复判断类型', '回复原因'
-            ]
-            column_order = base_columns + source_columns + result_columns + analysis_columns
-            
-            # Reorder columns (only include columns that exist)
-            existing_columns = [col for col in column_order if col in df.columns]
-            df = df[existing_columns]
-            
-            df.to_excel(output_file, index=False, engine='openpyxl')
-            logger.info(f"Results saved to Excel: {output_file}")
-        except PermissionError:
-            logger.error("File is locked by another program")
-            return create_response(False, ErrorCode.FILE_LOCKED, output_file)
-        except Exception as e:
-            logger.error(f"Failed to save results: {e}")
-            return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
-        
-        logger.info("Integrated batch processing and analysis completed successfully!")
-        
-        # Return success response with additional information
-        response = create_response(True)
-        response['output_file'] = output_file
-        response['intermediate_file'] = intermediate_output_file
-        response['total_groups'] = len(processed_groups)
-        response['total_records'] = total_tasks
-        response['analysis_results_count'] = len(analysis_results)
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Integrated processing failed with unexpected error: {e}", exc_info=True)
-        return create_response(False, ErrorCode.SYSTEM_EXCEPTION, str(e))
-
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "CKB QA Tool API",
-        "version": "1.0.0",
-        "endpoints": {
-            "/process": "POST - Process batch and perform data analysis",
-            "/health": "GET - Health check"
-        }
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "CKB QA Tool API"
-    }
-
-
-@app.post("/process", response_model=ProcessingResponse)
-async def process_batch_and_analysis(request: ProcessingRequest):
-    """
-    Process batch and perform data analysis
-    
-    This endpoint accepts parameters and executes the integrated workflow:
-    1. Batch processing (CKB QA) based on questions from input file
-    2. Data analysis (problem-side, recall-side, reply-side) based on parameters
-    3. Save integrated results to Excel file
-    
-    Returns:
-        ProcessingResponse with success status, output file path, and statistics
-    """
-    try:
-        logger.info(f"Received processing request: file_path={request.file_path}")
-        
-        # Execute integrated workflow
-        result = await process_integrated_workflow(
-            file_path=request.file_path,
-            query_selected=request.query_selected,
-            chunk_selected=request.chunk_selected,
-            answer_selected=request.answer_selected,
-            problem_analysis=request.problem_analysis,
-            norm_analysis=request.norm_analysis,
-            set_analysis=request.set_analysis,
-            recall_analysis=request.recall_analysis,
-            reply_analysis=request.reply_analysis,
-            scene_config_file=request.scene_config_file,
-            parallel_execution=request.parallel_execution
-        )
-        
-        # Convert to ProcessingResponse
-        response = ProcessingResponse(
-            success=result.get('success', False),
-            code=result.get('code', ''),
-            message=result.get('message', ''),
-            output_file=result.get('output_file'),
-            intermediate_file=result.get('intermediate_file'),
-            total_groups=result.get('total_groups'),
-            total_records=result.get('total_records'),
-            analysis_results_count=result.get('analysis_results_count')
-        )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"API endpoint error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
-
-FastAPI application for integrated batch processing and data analysis
-"""
-import asyncio
-import sys
-import os
-from pathlib import Path
-from typing import Optional
-from datetime import datetime
-
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
-
-# Setup root logging first - this must be done before importing other modules
-from conf.logging import setup_root_logging
-setup_root_logging(
-    log_dir="log",
-    console_level="INFO",
-    file_level="DEBUG",
-    root_level="DEBUG",
-    use_timestamp=True,
-    log_filename_prefix="ckb_qa_tool_api"
-)
-
-# Import logging module for use in this file
-import logging
-logger = logging.getLogger(__name__)
-
-# Import FastAPI and related modules
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import Optional as Opt
-
-# Import batch processing and data analysis modules
-from spark_api_tool.main import process_batch
-from spark_api_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
-from spark_api_tool.config import config_manager
-
-# Import data analysis modules
-from data_analysis_tool.main import DataAnalysisTool
-from data_analysis_tool.config import AnalysisConfig
-from data_analysis_tool.models import AnalysisInput, AnalysisResult
-
-# Import error handling
-from conf.error_codes import ErrorCode, create_response
-
-# Helper functions (copied from main.py to avoid circular imports)
-def convert_batch_results_to_analysis_inputs(
-    batch_groups: list[ConversationGroup],
-    chunk_selected: bool = False,
-    answer_selected: bool = False
-) -> list[AnalysisInput]:
-    """
-    Convert batch processing results to analysis input format
-    
-    Args:
-        batch_groups: List of ConversationGroup from batch processing
-        chunk_selected: Whether correct source is available
-        answer_selected: Whether correct answer is available
-        
-    Returns:
-        List of AnalysisInput objects
-    """
-    analysis_inputs = []
-    
-    for group in batch_groups:
-        for task in group.get_tasks():
-            # Extract question (required)
-            question = task.question if task.question else ""
-            if not question:
-                continue
-            
-            # Extract correct source (if available)
-            correct_source = None
-            if chunk_selected:
-                correct_source = task.correct_source if task.correct_source else None
-            
-            # Extract correct answer (if available)
-            correct_answer = None
-            if answer_selected:
-                correct_answer = task.correct_answer if task.correct_answer else None
-            
-            # Extract sources (retrieval results from batch processing)
-            sources = task.sources if task.sources else []
-            
-            # Extract model response
-            model_response = task.model_response if task.model_response else None
-            
-            analysis_inputs.append(AnalysisInput(
-                question=question,
-                correct_answer=correct_answer,
-                correct_source=correct_source,
-                sources=sources,
-                model_response=model_response
-            ))
-    
-    return analysis_inputs
-
-
-def convert_analysis_results_to_excel_data(
-    batch_groups: list[ConversationGroup],
-    analysis_results: list[AnalysisResult],
-    input_file_path: Optional[str] = None
-) -> list[dict]:
-    """
-    Convert batch processing results and analysis results to Excel format
-    
-    Args:
-        batch_groups: List of ConversationGroup from batch processing
-        analysis_results: List of AnalysisResult from data analysis
-        input_file_path: Optional input file path to detect source column count
-        
-    Returns:
-        List of dictionaries for Excel output
-    """
-    excel_data = []
-    
-    # Create a mapping from question to analysis result
-    # Use stripped question as key to handle whitespace differences
-    analysis_map = {}
-    for result in analysis_results:
-        question = result.input_data.question
-        if question:
-            # Normalize question by stripping whitespace for matching
-            normalized_question = question.strip()
-            analysis_map[normalized_question] = result
-            # Also store original question as key for exact match
-            analysis_map[question] = result
-    
-    logger.info(f"Created analysis map with {len(analysis_map)} entries from {len(analysis_results)} analysis results")
-    
-    # Determine maximum number of source columns
-    # 1. Check from batch processing results
-    max_sources_from_batch = 0
-    for group in batch_groups:
-        for task in group.get_tasks():
-            if task.sources:
-                max_sources_from_batch = max(max_sources_from_batch, len(task.sources))
-    
-    # 2. Check from analysis results
-    max_sources_from_analysis = 0
-    for result in analysis_results:
-        if result.input_data.sources:
-            max_sources_from_analysis = max(max_sources_from_analysis, len(result.input_data.sources))
-    
-    # 3. Check from input file if provided
-    max_sources_from_input = 0
-    if input_file_path and os.path.exists(input_file_path):
-        try:
-            import pandas as pd
-            input_df = pd.read_excel(input_file_path, sheet_name='Sheet1')
-            for col in input_df.columns:
-                if str(col).startswith('溯源'):
-                    try:
-                        num_str = str(col).replace('溯源', '').strip()
-                        if num_str.isdigit():
-                            max_sources_from_input = max(max_sources_from_input, int(num_str))
-                    except:
-                        pass
-        except Exception as e:
-            logger.warning(f"Failed to read input file for source column detection: {e}")
-    
-    # Use the maximum of all sources
-    max_sources = max(
-        config_manager.mission.knowledge_num,  # From config
-        max_sources_from_batch,  # From batch processing results
-        max_sources_from_analysis,  # From analysis results
-        max_sources_from_input  # From input file
-    )
-    logger.info(f"Using {max_sources} source columns (from config: {config_manager.mission.knowledge_num}, "
-                f"from batch: {max_sources_from_batch}, from analysis: {max_sources_from_analysis}, "
-                f"from input: {max_sources_from_input})")
-    
-    # Process batch groups and merge with analysis results
-    for group in batch_groups:
-        for task in group.get_tasks():
-            row_data = {}
-            
-            # Basic fields from batch processing
-            row_data['对话ID'] = group.conversation_id if group.conversation_id else ''
-            row_data['问题'] = task.question if task.question else ''
-            row_data['参考溯源'] = task.correct_source if task.correct_source else ''
-            row_data['参考答案'] = task.correct_answer if task.correct_answer else ''
-            
-            # Source fields (溯源1, 溯源2, ...) - dynamic based on max_sources
-            for i in range(1, max_sources + 1):
-                if task.sources and i <= len(task.sources):
-                    row_data[f'溯源{i}'] = task.sources[i - 1] if task.sources[i - 1] else ''
-                else:
-                    row_data[f'溯源{i}'] = ''
-            
-            # Model response and IDs
-            row_data['模型回复'] = task.model_response if task.model_response else ''
-            row_data['RequestId'] = task.request_id if task.request_id else ''
-            row_data['SessionId'] = task.session_id if task.session_id else ''
-            
-            # Analysis results (if available)
-            # Try exact match first, then normalized match
-            analysis_result = analysis_map.get(task.question)
-            if not analysis_result and task.question:
-                normalized_question = task.question.strip()
-                analysis_result = analysis_map.get(normalized_question)
-            
-            if analysis_result:
-                # Norm analysis results (problem-side normativity analysis)
-                if analysis_result.norm_analysis:
-                    row_data['是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
-                    row_data['问题类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
-                    row_data['问题原因'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
-                else:
-                    row_data['是否规范'] = ''
-                    row_data['问题类型'] = ''
-                    row_data['问题原因'] = ''
-                
-                # Set analysis results
-                if analysis_result.set_analysis:
-                    row_data['是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
-                    row_data['在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
-                    row_data['在集原因'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
-                else:
-                    row_data['是否在集'] = ''
-                    row_data['在集类型'] = ''
-                    row_data['在集原因'] = ''
-                
-                # Recall analysis results
-                if analysis_result.recall_analysis:
-                    if analysis_result.recall_analysis.is_retrieval_correct is not None:
-                        row_data['检索是否正确'] = analysis_result.recall_analysis.is_retrieval_correct
-                        row_data['检索判断类型'] = analysis_result.recall_analysis.retrieval_judgment_type if analysis_result.recall_analysis.retrieval_judgment_type else ''
-                        row_data['检索原因'] = analysis_result.recall_analysis.retrieval_reason if analysis_result.recall_analysis.retrieval_reason else ''
-                    else:
-                        row_data['检索是否正确'] = ''
-                        row_data['检索判断类型'] = ''
-                        row_data['检索原因'] = ''
-                else:
-                    row_data['检索是否正确'] = ''
-                    row_data['检索判断类型'] = ''
-                    row_data['检索原因'] = ''
-                
-                # Response analysis results
-                if analysis_result.response_analysis:
-                    if analysis_result.response_analysis.is_response_correct is not None:
-                        row_data['回复是否正确'] = analysis_result.response_analysis.is_response_correct
-                        row_data['回复判断类型'] = analysis_result.response_analysis.response_judgment_type if analysis_result.response_analysis.response_judgment_type else ''
-                        row_data['回复原因'] = analysis_result.response_analysis.response_reason if analysis_result.response_analysis.response_reason else ''
-                    else:
-                        row_data['回复是否正确'] = ''
-                        row_data['回复判断类型'] = ''
-                        row_data['回复原因'] = ''
-                else:
-                    row_data['回复是否正确'] = ''
-                    row_data['回复判断类型'] = ''
-                    row_data['回复原因'] = ''
-            else:
-                # No analysis result, fill with empty values
-                row_data['是否规范'] = ''
-                row_data['问题类型'] = ''
-                row_data['问题原因'] = ''
-                row_data['是否在集'] = ''
-                row_data['在集类型'] = ''
-                row_data['在集原因'] = ''
-                row_data['检索是否正确'] = ''
-                row_data['检索判断类型'] = ''
-                row_data['检索原因'] = ''
-                row_data['回复是否正确'] = ''
-                row_data['回复判断类型'] = ''
-                row_data['回复原因'] = ''
-            
-            excel_data.append(row_data)
-    
-    return excel_data
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="CKB QA Tool API",
-    description="Integrated batch processing and data analysis API",
-    version="1.0.0"
-)
-
-
-class ProcessingRequest(BaseModel):
-    """Request model for batch processing and data analysis"""
-    # Required parameters
-    file_path: str = Field(..., description="Input Excel file path")
-    query_selected: bool = Field(True, description="Whether to use query field (must be true)")
-    
-    # Optional field selections
-    chunk_selected: bool = Field(True, description="Whether to use correct source field")
-    answer_selected: bool = Field(True, description="Whether to use correct answer field")
-    
-    # Analysis module switches
-    problem_analysis: bool = Field(True, description="Enable problem-side analysis")
-    norm_analysis: bool = Field(True, description="Enable normativity analysis (requires problem_analysis)")
-    set_analysis: bool = Field(True, description="Enable in/out set analysis (requires problem_analysis)")
-    recall_analysis: bool = Field(True, description="Enable recall-side analysis")
-    reply_analysis: bool = Field(True, description="Enable reply-side analysis")
-    
-    # Optional configuration
-    scene_config_file: Opt[str] = Field(
-        default=r"data\scene_config.xlsx",
-        description="Scene configuration file (required if set_analysis=true)"
-    )
-    parallel_execution: bool = Field(True, description="Use parallel execution for analysis")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "file_path": "data/test_examples.xlsx",
-                "query_selected": True,
-                "chunk_selected": True,
-                "answer_selected": True,
-                "problem_analysis": True,
-                "norm_analysis": True,
-                "set_analysis": True,
-                "recall_analysis": True,
-                "reply_analysis": True,
-                "scene_config_file": "data/scene_config.xlsx",
-                "parallel_execution": True
-            }
-        }
-
-
-class ProcessingResponse(BaseModel):
-    """Response model for batch processing and data analysis"""
-    success: bool
-    code: str
-    message: str
-    output_file: Opt[str] = None
-    intermediate_file: Opt[str] = None
-    total_groups: Opt[int] = None
-    total_records: Opt[int] = None
-    analysis_results_count: Opt[int] = None
-
-
-async def process_integrated_workflow(
-    file_path: str,
-    query_selected: bool,
-    chunk_selected: bool,
-    answer_selected: bool,
-    problem_analysis: bool,
-    norm_analysis: bool,
-    set_analysis: bool,
-    recall_analysis: bool,
-    reply_analysis: bool,
-    scene_config_file: str,
-    parallel_execution: bool
-) -> dict:
-    """
-    Execute integrated batch processing and data analysis workflow
-    
-    This function is extracted from main.py's main() function to be used by API
-    """
-    try:
-        # Validate required parameters
-        if not query_selected:
-            logger.error("query_selected must be True")
-            return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
-        
-        if not file_path:
-            logger.error("file_path is required")
-            return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
-        
-        if not os.path.exists(file_path):
-            logger.error(f"Input file not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        
-        logger.info(f"Starting integrated batch processing and analysis")
-        logger.info(f"Input file: {file_path}")
-        logger.info(f"Analysis parameters:")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - chunk_selected: {chunk_selected}")
-        logger.info(f"  - answer_selected: {answer_selected}")
-        logger.info(f"  - scene_config_file: {scene_config_file}")
-        
-        # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
-        if norm_analysis or set_analysis:
-            problem_analysis = True
-            logger.info("Auto-enabled problem_analysis because norm_analysis or set_analysis is enabled")
-        
-        # Step 1: Read input file for batch processing
-        logger.info("Step 1: Reading input file for batch processing...")
-        try:
-            batch_handler = BatchExcelHandler(file_path)
-            batch_groups = batch_handler.read_data()
-        except FileNotFoundError:
-            logger.error(f"File not found: {file_path}")
-            return create_response(False, ErrorCode.FILE_NOT_FOUND, file_path)
-        except Exception as e:
-            logger.error(f"Failed to read input file: {e}")
-            return create_response(False, ErrorCode.FILE_READ_ERROR, str(e))
-        
-        if not batch_groups:
-            logger.warning("No conversation groups found in input file")
-            return create_response(False, ErrorCode.DATA_NO_GROUPS)
-        
-        logger.info(f"Read {len(batch_groups)} conversation groups from input file")
-        
-        # Step 2: Perform batch processing (CKB QA) - must complete first
-        logger.info("Step 2: Starting batch processing (CKB QA)...")
-        try:
-            processed_groups = await process_batch(batch_groups)
-        except Exception as e:
-            logger.error(f"Batch processing failed: {e}", exc_info=True)
-            return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
-        
-        logger.info(f"Batch processing completed: {len(processed_groups)} groups processed")
-        
-        # Step 3: Save batch processing results (intermediate output)
-        intermediate_output_file = None
-        logger.info("Step 3: Saving batch processing results...")
-        try:
-            # Generate intermediate output file path
-            input_path = Path(file_path)
-            output_dir = input_path.parent / 'data'
-            output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            intermediate_output_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
-            
-            # Save batch processing results
-            batch_handler.write_results(processed_groups, intermediate_output_file)
-            logger.info(f"Batch processing results saved to: {intermediate_output_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save intermediate batch results: {e}, continuing with analysis")
-        
-        # Step 4: Convert batch results to analysis inputs
-        logger.info("Step 4: Converting batch results to analysis format...")
-        analysis_inputs = convert_batch_results_to_analysis_inputs(
-            processed_groups,
-            chunk_selected=chunk_selected,
-            answer_selected=answer_selected
-        )
-        
-        if not analysis_inputs:
-            logger.warning("No valid data for analysis")
-            return create_response(False, ErrorCode.DATA_NO_VALID_RECORDS)
-        
-        logger.info(f"Converted {len(analysis_inputs)} records for analysis")
-        
-        # Step 5: Perform data analysis on batch processing results (if any analysis is enabled)
-        analysis_results = []
-        any_analysis_enabled = problem_analysis or norm_analysis or set_analysis or recall_analysis or reply_analysis
-        logger.info(f"Step 5: Checking analysis conditions...")
-        logger.info(f"  - problem_analysis: {problem_analysis}")
-        logger.info(f"  - norm_analysis: {norm_analysis}")
-        logger.info(f"  - set_analysis: {set_analysis}")
-        logger.info(f"  - recall_analysis: {recall_analysis}")
-        logger.info(f"  - reply_analysis: {reply_analysis}")
-        logger.info(f"  - Any analysis enabled: {any_analysis_enabled}")
-        
-        if any_analysis_enabled:
-            logger.info("Step 5: Starting data analysis on batch processing results...")
-            
-            # Create analysis config with all enabled analysis modules
-            analysis_config = AnalysisConfig(
-                query_selected=query_selected,
-                file_path=file_path,  # Not used for analysis, but required
-                chunk_selected=chunk_selected,
-                answer_selected=answer_selected,
-                problem_analysis=problem_analysis,
-                norm_analysis=norm_analysis,
-                set_analysis=set_analysis,
-                recall_analysis=recall_analysis,
-                reply_analysis=reply_analysis,
-                scene_config_file=scene_config_file,
-                parallel_execution=parallel_execution
+        # Validate file path
+        if not os.path.exists(request.file_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Input file not found: {request.file_path}"
             )
-            
-            # Validate analysis config
-            is_valid, error_msg = analysis_config.validate()
-            if not is_valid:
-                logger.error(f"Analysis configuration validation failed: {error_msg}")
-                if "querySelected" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_QUERY_NOT_SELECTED)
-                elif "norm_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_NORM_REQUIRES_PROBLEM)
-                elif "set_analysis" in error_msg and "problem_analysis" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_PROBLEM)
-                elif "scene_config_file" in error_msg:
-                    return create_response(False, ErrorCode.CONFIG_SET_REQUIRES_SCENE)
-                else:
-                    return create_response(False, ErrorCode.CONFIG_INVALID, error_msg)
-            
-            # Create analysis tool
-            try:
-                analysis_tool = DataAnalysisTool(analysis_config)
-            except Exception as e:
-                logger.error(f"Failed to initialize analysis tool: {e}", exc_info=True)
-                return create_response(False, ErrorCode.SYSTEM_EXCEPTION, f"Tool initialization: {str(e)}")
-            
-            # Execute analysis
-            try:
-                if parallel_execution:
-                    logger.info("Using parallel execution mode for data analysis")
-                    analysis_results = await analysis_tool.analyze_parallel(analysis_inputs)
-                else:
-                    logger.info("Using sequential execution mode for data analysis")
-                    analysis_results = analysis_tool.analyze(analysis_inputs)
-            except Exception as e:
-                logger.error(f"Data analysis execution failed: {e}", exc_info=True)
-                return create_response(False, ErrorCode.ANALYSIS_TASK_FAILED, str(e))
-            
-            logger.info(f"Data analysis completed: {len(analysis_results)} results")
-            if analysis_results:
-                # Log sample of analysis results for debugging
-                sample_result = analysis_results[0]
-                logger.info(f"Sample analysis result - Question: {sample_result.input_data.question[:50]}...")
-                logger.info(f"  - norm_analysis: {sample_result.norm_analysis is not None}")
-                logger.info(f"  - set_analysis: {sample_result.set_analysis is not None}")
-                logger.info(f"  - recall_analysis: {sample_result.recall_analysis is not None}")
-                logger.info(f"  - response_analysis: {sample_result.response_analysis is not None}")
-            else:
-                logger.warning("Analysis completed but returned empty results list!")
-        else:
-            logger.warning("Step 5: Skipping data analysis (no analysis modules enabled)")
         
-        # Step 6: Merge batch processing results with analysis results
-        logger.info("Step 6: Merging batch processing results with analysis results...")
-        logger.info(f"Merging {len(processed_groups)} batch groups with {len(analysis_results)} analysis results")
+        # Create task state
+        task_state = create_task_state(request.task_id)
         
-        # Count tasks for logging
-        total_tasks = sum(len(group.get_tasks()) for group in processed_groups)
-        logger.info(f"Total tasks to merge: {total_tasks}")
-        
-        # Log sample questions for debugging
-        if processed_groups:
-            sample_group = processed_groups[0]
-            sample_tasks = sample_group.get_tasks()
-            if sample_tasks:
-                logger.info(f"Sample batch task question: {sample_tasks[0].question[:50]}...")
-        if analysis_results:
-            logger.info(f"Sample analysis result question: {analysis_results[0].input_data.question[:50]}...")
-        
-        # Step 7: Save final integrated results to Excel
-        logger.info("Step 7: Saving final integrated results to Excel...")
-        
-        # Convert to Excel format
-        excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
-        logger.info(f"Converted to Excel format: {len(excel_data)} rows")
-        
-        # Generate output file path
-        input_path = Path(file_path)
-        output_dir = input_path.parent / 'data'
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = str(output_dir / f"{input_path.stem}_integrated_result_{timestamp}.xlsx")
-        
-        # Save to Excel
-        try:
-            import pandas as pd
-            
-            df = pd.DataFrame(excel_data)
-            
-            # Define column order
-            # Determine max_sources from the actual data
-            base_columns = ['对话ID', '问题', '参考溯源', '参考答案']
-            # Find max source column number from the data
-            max_sources = 0
-            for row in excel_data:
-                for col_name in row.keys():
-                    if str(col_name).startswith('溯源'):
-                        try:
-                            num_str = str(col_name).replace('溯源', '').strip()
-                            if num_str.isdigit():
-                                max_sources = max(max_sources, int(num_str))
-                        except:
-                            pass
-            # If no sources found, use config default
-            if max_sources == 0:
-                max_sources = config_manager.mission.knowledge_num
-            source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
-            result_columns = ['模型回复', 'RequestId', 'SessionId']
-            analysis_columns = [
-                '是否规范', '问题类型', '问题原因',
-                '是否在集', '在集类型', '在集原因',
-                '检索是否正确', '检索判断类型', '检索原因',
-                '回复是否正确', '回复判断类型', '回复原因'
-            ]
-            column_order = base_columns + source_columns + result_columns + analysis_columns
-            
-            # Reorder columns (only include columns that exist)
-            existing_columns = [col for col in column_order if col in df.columns]
-            df = df[existing_columns]
-            
-            df.to_excel(output_file, index=False, engine='openpyxl')
-            logger.info(f"Results saved to Excel: {output_file}")
-        except PermissionError:
-            logger.error("File is locked by another program")
-            return create_response(False, ErrorCode.FILE_LOCKED, output_file)
-        except Exception as e:
-            logger.error(f"Failed to save results: {e}")
-            return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
-        
-        logger.info("Integrated batch processing and analysis completed successfully!")
-        
-        # Return success response with additional information
-        response = create_response(True)
-        response['output_file'] = output_file
-        response['intermediate_file'] = intermediate_output_file
-        response['total_groups'] = len(processed_groups)
-        response['total_records'] = total_tasks
-        response['analysis_results_count'] = len(analysis_results)
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Integrated processing failed with unexpected error: {e}", exc_info=True)
-        return create_response(False, ErrorCode.SYSTEM_EXCEPTION, str(e))
-
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "CKB QA Tool API",
-        "version": "1.0.0",
-        "endpoints": {
-            "/process": "POST - Process batch and perform data analysis",
-            "/health": "GET - Health check"
-        }
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "CKB QA Tool API"
-    }
-
-
-@app.post("/process", response_model=ProcessingResponse)
-async def process_batch_and_analysis(request: ProcessingRequest):
-    """
-    Process batch and perform data analysis
-    
-    This endpoint accepts parameters and executes the integrated workflow:
-    1. Batch processing (CKB QA) based on questions from input file
-    2. Data analysis (problem-side, recall-side, reply-side) based on parameters
-    3. Save integrated results to Excel file
-    
-    Returns:
-        ProcessingResponse with success status, output file path, and statistics
-    """
-    try:
-        logger.info(f"Received processing request: file_path={request.file_path}")
-        
-        # Execute integrated workflow
-        result = await process_integrated_workflow(
+        # Start workflow in background
+        background_tasks.add_task(
+            execute_workflow,
+            task_state=task_state,
             file_path=request.file_path,
             query_selected=request.query_selected,
             chunk_selected=request.chunk_selected,
@@ -2065,30 +975,154 @@ async def process_batch_and_analysis(request: ProcessingRequest):
             set_analysis=request.set_analysis,
             recall_analysis=request.recall_analysis,
             reply_analysis=request.reply_analysis,
-            scene_config_file=request.scene_config_file,
+            scene_config_file=request.scene_config_file or r"data\scene_config.xlsx",
             parallel_execution=request.parallel_execution
         )
         
-        # Convert to ProcessingResponse
-        response = ProcessingResponse(
-            success=result.get('success', False),
-            code=result.get('code', ''),
-            message=result.get('message', ''),
-            output_file=result.get('output_file'),
-            intermediate_file=result.get('intermediate_file'),
-            total_groups=result.get('total_groups'),
-            total_records=result.get('total_records'),
-            analysis_results_count=result.get('analysis_results_count')
+        logger.info(f"Task {request.task_id} started")
+        
+        return StartResponse(
+            success=True,
+            message=f"Task {request.task_id} started successfully",
+            task_id=request.task_id
         )
         
-        return response
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"API endpoint error: {e}", exc_info=True)
+        logger.error(f"Failed to start task: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail=f"Failed to start task: {str(e)}"
         )
+
+
+@app.get("/status/{task_id}", response_model=StatusResponse)
+async def get_status(task_id: str):
+    """
+    Get task status and progress
+    
+    Args:
+        task_id: Task identifier
+        
+    Returns:
+        StatusResponse with progress and status information
+    """
+    task_state = get_task_state(task_id)
+    
+    if not task_state:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+    
+    # Update progress from logs
+    update_progress_from_log(task_state, task_id)
+    
+    # Convert to response
+    state_dict = task_state.to_dict()
+    
+    return StatusResponse(**state_dict)
+
+
+@app.get("/download/{task_id}", response_model=DownloadResponse)
+async def download_files(task_id: str):
+    """
+    Get download file paths for completed task
+    
+    Args:
+        task_id: Task identifier
+        
+    Returns:
+        DownloadResponse with file paths
+    """
+    task_state = get_task_state(task_id)
+    
+    if not task_state:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+    
+    # Check if files are ready
+    if not task_state.excel_file:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task_id} has not generated output files yet"
+        )
+    
+    # Check if files exist
+    excel_exists = task_state.excel_file and os.path.exists(task_state.excel_file)
+    json_exists = task_state.json_file and os.path.exists(task_state.json_file)
+    
+    if not excel_exists:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Excel file not found for task {task_id}"
+        )
+    
+    return DownloadResponse(
+        success=True,
+        message=f"Files ready for task {task_id}",
+        excel_file=task_state.excel_file,
+        json_file=task_state.json_file if json_exists else None
+    )
+
+
+@app.post("/interrupt/{task_id}", response_model=InterruptResponse)
+async def interrupt_task(task_id: str):
+    """
+    Interrupt a running task
+    
+    Args:
+        task_id: Task identifier
+        
+    Returns:
+        InterruptResponse with any saved files
+    """
+    task_state = get_task_state(task_id)
+    
+    if not task_state:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+    
+    if task_state.is_cancelled():
+        return InterruptResponse(
+            success=True,
+            message=f"Task {task_id} was already cancelled",
+            excel_file=task_state.excel_file,
+            json_file=task_state.json_file,
+            intermediate_file=task_state.intermediate_file
+        )
+    
+    # Cancel the task
+    task_state.cancel()
+    
+    # Update all in-progress statuses to cancelled
+    if task_state.batch_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(batch_status=TaskStatus.CANCELLED)
+    if task_state.norm_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(norm_status=TaskStatus.CANCELLED)
+    if task_state.set_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(set_status=TaskStatus.CANCELLED)
+    if task_state.recall_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(recall_status=TaskStatus.CANCELLED)
+    if task_state.reply_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(reply_status=TaskStatus.CANCELLED)
+    if task_state.metrics_status == TaskStatus.IN_PROGRESS:
+        task_state.update_status(metrics_status=TaskStatus.CANCELLED)
+    
+    logger.info(f"Task {task_id} interrupted")
+    
+    return InterruptResponse(
+        success=True,
+        message=f"Task {task_id} interrupted successfully",
+        excel_file=task_state.excel_file if task_state.excel_file and os.path.exists(task_state.excel_file) else None,
+        json_file=task_state.json_file if task_state.json_file and os.path.exists(task_state.json_file) else None,
+        intermediate_file=task_state.intermediate_file if task_state.intermediate_file and os.path.exists(task_state.intermediate_file) else None
+    )
 
 
 if __name__ == "__main__":
@@ -2100,3 +1134,5 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
+
+# uvicorn app:app --host 0.0.0.0 --port 8000 --reload --log-level info

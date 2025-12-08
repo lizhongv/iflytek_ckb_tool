@@ -63,7 +63,6 @@ effect:
 mission:
   # 数据集文件配置
   input_file: "data/test_examples.xlsx"                # 输入数据文件路径（Excel格式）
-  output_file: "data/test_examples_output.xlsx"      # 输出结果文件路径（Excel格式）
 
   # 知识检索配置
   knowledge_num: 8                  # 检索知识条数，范围1-50，用于问答时从知识库中检索相关文档

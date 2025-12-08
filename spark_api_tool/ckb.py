@@ -59,7 +59,7 @@ class CkbClient:
             self.get_answer_url = f"{base_url}/ckb/spark-knowledge/v1/qalog/"
 
         self.add_app_name = "ckb_" + str(time.time())
-        logger.info(f"New app name: {self.add_app_name}")
+        logger.info(f"[CKB] Create an app nameed: {self.add_app_name}")
         
         self.DEFAULT_TRANSFORMATION = padding.OAEP(
             mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -142,6 +142,7 @@ class CkbClient:
         return string
 
     async def login(self, password):
+        """Login to ckb"""
         headers = {
             'Content-Type': "application/json",
         }
@@ -173,6 +174,7 @@ class CkbClient:
                 return False, e
 
     async def get_auth_app(self):
+        logger.info(f"[AUTH] Login to knowledge base system")
         success, self.user_id, self.tenant_id, self.cookie_session, error_code = await login_knowledge()
 
         if not success or not self.cookie_session:
@@ -180,6 +182,7 @@ class CkbClient:
             logger.error(error_msg)
             return False, error_msg
 
+        logger.info(f"[AUTH] Add cookie_session and tenant_id to CKB")
         res, public_key = await self.ckb_add(self.cookie_session, self.tenant_id)
         if not res:
             logger.error(f"Failed to get public key: {public_key}, skipping subsequent steps")
@@ -190,6 +193,7 @@ class CkbClient:
             logger.error("Failed to get jar string, skipping subsequent steps")
             return False, None
 
+        logger.info(f"[AUTH] Login to ckb")
         res, auth_app = await self.login(jar_string)
         if not res:
             logger.error(f"Failed to get auth_app: {auth_app}, skipping subsequent steps")

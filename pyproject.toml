@@ -1,21 +1,37 @@
 [project]
 name = "ckb-qa-tool-v0-1-1"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.1"
+description = "Integrated batch processing, data analysis, and metrics analysis tool for CKB QA"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # HTTP and WebSocket clients
     "aiohttp>=3.12.14",
-    "cryptography>=45.0.5",
-    "openpyxl>=3.1.5",
-    "pandas>=2.3.1",
-    "pyinstaller>=6.14.2",
-    "toml>=0.10.2",
-    "pyyaml>=6.0.0",
+    "requests>=2.32.0",
     "websockets>=15.0.1",
+    "websocket-client>=1.8.0",
+    
+    # Web framework and API
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0.0",
+    
+    # Data processing
+    "pandas>=2.3.1",
+    "openpyxl>=3.1.5",
+    
+    # Configuration and environment
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    
+    # Cryptography and security
+    "cryptography>=45.0.5",
+    
+    # AI/LLM APIs
+    "openai>=1.54.0",
+    
+    # Optional: Packaging (only needed for building executables)
+    # "pyinstaller>=6.14.2",
 ]
 
 [[tool.uv.index]]

@@ -158,7 +158,6 @@ class ExcelHandler:
         """
         try:
             self.df = pd.read_excel(self.file_path, sheet_name='Sheet1')
-            logger.info(f"Successfully read Excel file")
         except FileNotFoundError:
             logger.error(f"File not found: {self.file_path}")
             raise
@@ -179,9 +178,9 @@ class ExcelHandler:
         # Check if conversation ID column exists to determine mode
         has_conversation_id = conv_id_col is not None
         if has_conversation_id:
-            logger.info("Multi-turn conversation mode detected (conversation ID column found)")
+            logger.info("[FILE_READ] Multi-turn conversation mode detected (conversation ID column found)")
         else:
-            logger.info("Single-turn conversation mode detected (no conversation ID column)")
+            logger.info("[FILE_READ] Single-turn conversation mode detected (no conversation ID column)")
         
         # Group conversations by conversation ID
         groups: Dict[Optional[str], ConversationGroup] = {}
@@ -242,13 +241,13 @@ class ExcelHandler:
         single_turn_groups = len(group_list) - multi_turn_groups
         
         if has_conversation_id:
-            logger.info(f"Successfully read {len(group_list)} conversation groups ({multi_turn_groups} multi-turn, {single_turn_groups} single-turn), {total_tasks} total tasks")
+            logger.info(f"[FILE_READ] Successfully read {len(group_list)} conversation groups ({multi_turn_groups} multi-turn, {single_turn_groups} single-turn), {total_tasks} total tasks")
         else:
-            logger.info(f"Successfully read {len(group_list)} single-turn conversation groups, {total_tasks} total tasks")
+            logger.info(f"[FILE_READ] Successfully read {len(group_list)} single-turn conversation groups, {total_tasks} total tasks")
         
         return group_list
     
-    def write_results(self, groups: List[ConversationGroup], output_path: str):
+    def write_results_excel(self, groups: List[ConversationGroup], output_path: str):
         """
         Write results to Excel file
         
@@ -275,9 +274,9 @@ class ExcelHandler:
         # Remove '对话ID' column if single-turn mode (no conversation IDs)
         if not has_conversation_id and '对话ID' in df.columns:
             df = df.drop(columns=['对话ID'])
-            logger.info("Single-turn mode detected: '对话ID' column removed from output")
+            logger.debug("Single-turn mode detected: '对话ID' column removed from output")
         elif has_conversation_id:
-            logger.info("Multi-turn mode detected: '对话ID' column included in output")
+            logger.debug("Multi-turn mode detected: '对话ID' column included in output")
         
         # Get max sources count from config
         max_sources = config_manager.mission.knowledge_num
@@ -301,9 +300,7 @@ class ExcelHandler:
             # Ensure output directory exists
             output_path_obj = Path(output_path)
             output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-            
             df.to_excel(output_path, index=False, engine='openpyxl')
-            logger.info(f"Results saved to Excel: {output_path}")
         except PermissionError:
             logger.error("File is locked by another program, cannot write results")
             raise
@@ -342,8 +339,6 @@ class ExcelHandler:
                 for item in result_data:
                     json_line = json.dumps(item, ensure_ascii=False)
                     f.write(json_line + '\n')
-            
-            logger.info(f"Results saved to JSONL: {jsonl_path}")
         except PermissionError:
             logger.error("File is locked by another program, cannot write JSONL results")
             raise
