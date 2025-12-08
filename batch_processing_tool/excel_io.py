@@ -269,11 +269,26 @@ class ExcelHandler:
         # Create DataFrame
         df = pd.DataFrame(result_data)
         
+        # Check if any group has conversation_id (multi-turn mode)
+        has_conversation_id = any(group.conversation_id is not None for group in groups)
+        
+        # Remove '对话ID' column if single-turn mode (no conversation IDs)
+        if not has_conversation_id and '对话ID' in df.columns:
+            df = df.drop(columns=['对话ID'])
+            logger.info("Single-turn mode detected: '对话ID' column removed from output")
+        elif has_conversation_id:
+            logger.info("Multi-turn mode detected: '对话ID' column included in output")
+        
         # Get max sources count from config
         max_sources = config_manager.mission.knowledge_num
         
-        # Define column order (dynamic based on config)
-        base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
+        # Define column order (dynamic based on config and conversation mode)
+        # Only include '对话ID' column if there are multi-turn conversations
+        if has_conversation_id:
+            base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
+        else:
+            base_columns = ['用户问题', '参考溯源', '参考答案']
+        
         source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
         result_columns = ['模型回复', 'RequestId', 'SessionId']
         column_order = base_columns + source_columns + result_columns

@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.backends import default_backend
 import uuid
 import asyncio
+from typing import Optional
 
 # Add project root to path for importing conf modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,18 +35,28 @@ logger = logging.getLogger(__name__)
 class CkbClient:
     """Client for Spark Knowledge Base API"""
     
-    def __init__(self, intranet: bool = True):
-        self.intranet = intranet
-        if intranet:
+    def __init__(self, intranet: Optional[bool] = None):
+        """
+        Initialize CKB client
+        
+        Args:
+            intranet: Whether to use intranet. If None, use value from config
+        """
+        # Use config value if intranet parameter is not provided
+        self.intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if self.intranet:
             self.add_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/app/add"
             self.login_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/app/login"
             self.save_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/spark-knowledge/openapi/v1/session/save"
             self.get_answer_url = f"http://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/ckb/spark-knowledge/v1/qalog/"
         else:
-            self.add_url = f"https://ssc.mohrss.gov.cn/ckb/app/add"
-            self.login_url = f"https://ssc.mohrss.gov.cn/ckb/app/login"
-            self.save_url = f"https://ssc.mohrss.gov.cn/ckb/spark-knowledge/openapi/v1/session/save"
-            self.get_answer_url = f"https://ssc.mohrss.gov.cn/ckb/spark-knowledge/v1/qalog/"
+            # Use external_base_url from config
+            base_url = config_manager.server.external_base_url
+            self.add_url = f"{base_url}/ckb/app/add"
+            self.login_url = f"{base_url}/ckb/app/login"
+            self.save_url = f"{base_url}/ckb/spark-knowledge/openapi/v1/session/save"
+            self.get_answer_url = f"{base_url}/ckb/spark-knowledge/v1/qalog/"
 
         self.add_app_name = "ckb_" + str(time.time())
         logger.info(f"New app name: {self.add_app_name}")
@@ -211,18 +222,40 @@ class CkbClient:
                         retrieval_list.append(response_data)
                         return False, "Retrieval is empty", retrieval_list
 
-                    process_list = data["processList"]
+                    process_list = data.get("processList")
+                    if not process_list:
+                        logger.warning(f"Spark Knowledge Base get_answer: processList is empty or None")
+                        # Try to get response from data directly
+                        response = data.get("response", "")
+                        return True, response, retrieval_list
 
+                    response = None
                     for process in process_list:
-                        if process["processName"] == "知识检索链路（对接docqa）":
-                            response = process["response"]
-                            response_json = json.loads(response)
-                            docParts = response_json["data"]["docParts"]
-                            for docPart in docParts:
-                                content = docPart["content"]
-                                retrieval_list.append(content)
+                        if process.get("processName") == "知识检索链路（对接docqa）":
+                            process_response = process.get("response")
+                            if process_response:
+                                try:
+                                    response_json = json.loads(process_response)
+                                    doc_data = response_json.get("data", {})
+                                    docParts = doc_data.get("docParts", [])
+                                    if docParts:
+                                        for docPart in docParts:
+                                            content = docPart.get("content", "")
+                                            if content:
+                                                retrieval_list.append(content)
+                                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                                    logger.warning(f"Failed to parse retrieval data: {e}")
                         else:
-                            response = process["response"]
+                            # Use the last response as the main response
+                            process_response = process.get("response")
+                            if process_response:
+                                response = process_response
+                    
+                    # If no response found, use empty string
+                    if response is None:
+                        logger.warning(f"No response found in processList")
+                        response = ""
+                    
                 return True, response, retrieval_list[:10]
         except Exception as e:
             error_msg = f"[{ErrorCode.CKB_GET_ANSWER_FAILED.code}] {ErrorCode.CKB_GET_ANSWER_FAILED.message}: {str(e)}"
@@ -254,15 +287,28 @@ class CkbClient:
                     logger.error(f"Failed to save session ID: {response_json}")
                     return None
 
-    def get_url(self, session_id, intranet: bool = True):
-        if intranet:
+    def get_url(self, session_id, intranet: Optional[bool] = None):
+        """
+        Get WebSocket URL for QA request
+        
+        Args:
+            session_id: Session ID
+            intranet: Whether to use intranet. If None, use self.intranet value
+        """
+        use_intranet = intranet if intranet is not None else self.intranet
+        
+        if use_intranet:
             self.qa_url = f"ws://{config_manager.server.ckb_ip}:{config_manager.server.ckb_port}/spark-knowledge/sparkRequest?loginName={config_manager.server.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
         else:
-            self.qa_url = f"wss://ssc.mohrss.gov.cn/spark-knowledge/sparkRequest?loginName={config_manager.server.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
+            # Use external_base_url from config, convert https:// to wss://
+            base_url = config_manager.server.external_base_url
+            ws_base_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
+            self.qa_url = f"{ws_base_url}/spark-knowledge/sparkRequest?loginName={config_manager.server.login_name}&type=answer&systemCode=web&sid={session_id}&tenantId={self.tenant_id}"
 
     async def ckb_qa(self, question, session_id):
         """Query Spark Knowledge Base with a question"""
-        self.get_url(session_id, intranet=False)
+        # Use self.intranet value (from config or constructor parameter)
+        self.get_url(session_id, intranet=None)
         logger.debug(f"Spark Knowledge Base request URL: {self.qa_url}")
        
         # WebSocket connection: if using wss:// (external network), SSL context is required

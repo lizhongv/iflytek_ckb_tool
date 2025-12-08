@@ -13,6 +13,9 @@ dependencies = [
     "toml>=0.10.2",
     "pyyaml>=6.0.0",
     "websockets>=15.0.1",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0.0",
 ]
 
 [[tool.uv.index]]

@@ -31,6 +31,7 @@ if parent_dir not in sys.path:
 
 from conf.error_codes import ErrorCode
 from config import config_manager
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -130,22 +131,25 @@ class LoginManager:
         """
         return hashlib.md5(text.encode('utf-8')).hexdigest()
     
-    async def get_config(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def get_config(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Get configuration
         
         Args:
-            intranet: Whether to use intranet address
+            intranet: Whether to use intranet address. If None, use value from config
             
         Returns:
             Tuple of (success, error_code)
         """
         await self.ensure_session()
+        
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
 
-        if intranet:
+        if use_intranet:
             url = f"http://{self.uap_ip}:{self.uap_port}/corpus_uap_server/getConfig"
         else:
-            url = "https://ssc.mohrss.gov.cn/corpus_uap_server/getConfig"
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/corpus_uap_server/getConfig"
         
         try:
             async with self.session.post(url) as response:
@@ -160,7 +164,7 @@ class LoginManager:
             logger.error(f"Get config failed: {e}")
             return False, ErrorCode.AUTH_UAP_FAILED
     
-    async def get_public_key(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def get_public_key(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Get public key
         
@@ -172,10 +176,13 @@ class LoginManager:
         """
         await self.ensure_session()
 
-        if intranet:
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if use_intranet:
             url = f"http://{self.uap_ip}:{self.uap_port}/corpus_uap_server/api/v2/getPublicKey"
         else:
-            url = "https://ssc.mohrss.gov.cn/corpus_uap_server/api/v2/getPublicKey"
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/corpus_uap_server/api/v2/getPublicKey"
         
         try:
             async with self.session.post(url) as response:
@@ -195,7 +202,7 @@ class LoginManager:
             logger.error(f"Get public key failed: {e}")
             return False, ErrorCode.AUTH_GET_PUBLIC_KEY_FAILED
     
-    async def get_tenant_info(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def get_tenant_info(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Get tenant information
         
@@ -207,10 +214,13 @@ class LoginManager:
         """
         await self.ensure_session()
 
-        if intranet:
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if use_intranet:
             url = f"http://{self.uap_ip}:{self.uap_port}/corpus_uap_server/search/tenants/byName"
         else:
-            url = "https://ssc.mohrss.gov.cn/corpus_uap_server/search/tenants/byName"
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/corpus_uap_server/search/tenants/byName"
         
         # Prepare encrypted data
         password_md5 = self.md5_hash(self.password)
@@ -259,30 +269,34 @@ class LoginManager:
             logger.error(f"Get tenant info failed: {e}")
             return False, ErrorCode.AUTH_GET_TENANT_INFO_FAILED
     
-    async def login_uap(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def login_uap(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Login to UAP
         
         Args:
-            intranet: Whether to use intranet address
+            intranet: Whether to use intranet address. If None, use value from config
             
         Returns:
             Tuple of (success, error_code)
         """
         await self.ensure_session()
+        
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
 
-        if intranet:
+        if use_intranet:
             base_url = f"http://{self.uap_ip}:{self.uap_port}"
         else:
-            base_url = "https://ssc.mohrss.gov.cn"
+            base_url = config_manager.server.external_base_url
         url = f"{base_url}/corpus_uap_server/api/v2/login"
     
-        if intranet:
+        # Determine service URL and redirect URL based on intranet flag
+        if use_intranet:
             service_url = f"http://{self.ckb_ip}:{self.ckb_port}/app-skb/auth/info"
             redirect_url = f"http://{self.ckb_ip}:{self.ckb_port}/app-skb/front/knowledge-space"
         else:
-            service_url = "https://ssc.mohrss.gov.cn/app-skb/auth/info"
-            redirect_url = "https://ssc.mohrss.gov.cn/app-skb/front/knowledge-space"
+            # Use external_base_url from config
+            service_url = f"{base_url}/app-skb/auth/info"
+            redirect_url = f"{base_url}/app-skb/front/knowledge-space"
         
         params = {
             'service': service_url,
@@ -356,7 +370,7 @@ class LoginManager:
             logger.error(f"UAP login exception: {e}")
             return False, ErrorCode.AUTH_LOGIN_FAILED
     
-    async def redirect_login(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def redirect_login(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Redirect login
         
@@ -368,11 +382,14 @@ class LoginManager:
         """
         await self.ensure_session()
 
-        if intranet:
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if use_intranet:
             url = f"http://{self.redirect_ip}:{self.redirect_port}{self.redirect_path}"
         else:
-            # Use external network address
-            url = "https://ssc.mohrss.gov.cn/corpus_uap_manager/getCsrfToken"
+            # Use external network address from config
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/corpus_uap_manager/getCsrfToken"
         
         headers = {
             'Content-Type': 'application/json',
@@ -465,7 +482,7 @@ class LoginManager:
             logger.error(f"Redirect login exception: {e}")
             return False, ErrorCode.AUTH_REDIRECT_FAILED
     
-    async def access_knowledge_homepage(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def access_knowledge_homepage(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Access knowledge base homepage
         
@@ -477,10 +494,13 @@ class LoginManager:
         """
         await self.ensure_session()
 
-        if intranet:
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if use_intranet:
             url = f"http://{self.redirect_ip}:{self.redirect_port}/app-skb/front/knowledge-space"
         else:
-            url = "https://ssc.mohrss.gov.cn/app-skb/front/knowledge-space"
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/app-skb/front/knowledge-space"
         
         headers = {
             'Content-Type': 'application/json',
@@ -562,7 +582,7 @@ class LoginManager:
             logger.error(f"Access knowledge homepage exception: {e}")
             return False, ErrorCode.AUTH_ACCESS_HOMEPAGE_FAILED
     
-    async def get_menu_info(self, intranet: bool = True) -> Tuple[bool, Optional[ErrorCode]]:
+    async def get_menu_info(self, intranet: Optional[bool] = None) -> Tuple[bool, Optional[ErrorCode]]:
         """
         Get menu information
         
@@ -574,10 +594,13 @@ class LoginManager:
         """
         await self.ensure_session()
 
-        if intranet:
+        use_intranet = intranet if intranet is not None else config_manager.server.intranet
+        
+        if use_intranet:
             url = f"http://{self.redirect_ip}:{self.redirect_port}/ckb/auth/info"
         else:
-            url = "https://ssc.mohrss.gov.cn/ckb/auth/info"
+            base_url = config_manager.server.external_base_url
+            url = f"{base_url}/ckb/auth/info"
         
         headers = {
             'Content-Type': 'application/json',
@@ -681,7 +704,8 @@ class LoginManager:
         
         for step_name, step_func in login_steps:
             try:
-                success, error_code = await step_func(intranet=False)
+                # Use config value (None means use config default)
+                success, error_code = await step_func(intranet=None)
                 if not success:
                     logger.error(f"Login failed at step: {step_name}, error_code: {error_code.code if error_code else 'Unknown'}")
                     return False, error_code

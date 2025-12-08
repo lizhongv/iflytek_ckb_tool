@@ -154,8 +154,12 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     thread_num = config_manager.mission.thread_num
     logger.info(f"Starting batch processing: {len(groups)} groups, {thread_num} threads")
     
-    # Initialize CKB client
-    ckb_client = CkbClient(intranet=False)
+    # Log network configuration
+    logger.info(f"Network configuration: intranet={config_manager.server.intranet}, external_base_url={config_manager.server.external_base_url}")
+    
+    # Initialize CKB client (use config value if not specified)
+    ckb_client = CkbClient(intranet=None)
+    logger.info(f"CKB client initialized with intranet={ckb_client.intranet}")
     
     # Get initial authentication
     logger.info("Getting initial authentication")
@@ -171,11 +175,11 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     processed_count = 0
     task_set = []
     remaining_groups = groups.copy()
-    refresh_interval = 10  # Refresh auth every 10 groups
+    refresh_interval = config_manager.mission.auth_refresh_interval  # Refresh auth every N groups (0 to disable)
     
     while remaining_groups or task_set:
-        # Refresh auth periodically
-        if processed_count > 0 and processed_count % refresh_interval == 0:
+        # Refresh auth periodically (if enabled)
+        if refresh_interval > 0 and processed_count > 0 and processed_count % refresh_interval == 0:
             auth_result = await refresh_auth(ckb_client)
             if not auth_result.get("success"):
                 logger.warning(f"Auth refresh failed: {auth_result.get('message')}, continuing...")

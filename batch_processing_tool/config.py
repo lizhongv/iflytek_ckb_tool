@@ -31,6 +31,10 @@ class ServerConfig:
     login_name: str
     password: str
     app_code: str = "spark_knowledge_base"
+    # Network configuration
+    intranet: bool = True  # Whether to use intranet (True) or external network (False)
+    # External network URLs (used when intranet=False)
+    external_base_url: str = "https://ssc.mohrss.gov.cn"  # Base URL for external network
 
 
 @dataclass
@@ -84,23 +88,16 @@ class ConfigManager:
     def __init__(self, config_file: Optional[str] = None):
         """Initialize configuration manager from YAML file"""
         if config_file is None:
-            # Try to find batch_config.yaml or app.toml in current directory or parent directory
+            # Try to find batch_config.yaml in current directory or parent directory
             current_dir = os.path.dirname(os.path.abspath(__file__))
             parent_dir = os.path.dirname(current_dir)
             
-            # Prefer YAML config file
+            # Look for YAML config file
             config_file = 'batch_config.yaml'
             if not os.path.exists(config_file):
                 parent_config = os.path.join(parent_dir, config_file)
                 if os.path.exists(parent_config):
                     config_file = parent_config
-                else:
-                    # Fallback to app.toml for backward compatibility
-                    config_file = 'app.toml'
-                    if not os.path.exists(config_file):
-                        parent_config = os.path.join(parent_dir, config_file)
-                        if os.path.exists(parent_config):
-                            config_file = parent_config
         
         self.config_path = Path(config_file)
         if not self.config_path.exists():
@@ -135,7 +132,9 @@ class ConfigManager:
                 uap_port=server_data.get("uap_port", 8086),
                 login_name=server_data.get("login_name", "ckbAdmin"),
                 password=server_data.get("password", ""),
-                app_code=server_data.get("app_code", "spark_knowledge_base")
+                app_code=server_data.get("app_code", "spark_knowledge_base"),  # Not used but kept for backward compatibility
+                intranet=server_data.get("intranet", True),  # Default to intranet
+                external_base_url=server_data.get("external_base_url", "https://ssc.mohrss.gov.cn")
             )
             
             # Load effect configuration
@@ -164,17 +163,17 @@ class ConfigManager:
             # Load mission configuration
             mission_data = config.get("mission", {})
             self.mission = MissionConfig(
-                check_answer_by_llm=mission_data.get("check_answer_by_llm"),
-                check_source_by_rule=mission_data.get("check_source_by_rule", False),
+                check_answer_by_llm=mission_data.get("check_answer_by_llm"),  # Not used but kept for backward compatibility
+                check_source_by_rule=mission_data.get("check_source_by_rule", False),  # Not used but kept for backward compatibility
                 thread_num=mission_data.get("thread_num", 1),
                 input_file=mission_data.get("input_file", ""),
                 output_file=mission_data.get("output_file", ""),
                 knowledge_num=mission_data.get("knowledge_num", 10),
                 auth_refresh_interval=mission_data.get("auth_refresh_interval", 10),
-                auth_refresh_time_minutes=mission_data.get("auth_refresh_time_minutes", 30)
+                auth_refresh_time_minutes=mission_data.get("auth_refresh_time_minutes", 30)  # Not used but kept for backward compatibility
             )
             
-            # Load spark configuration
+            # Load spark configuration (not used in batch_processing_tool, but kept for backward compatibility)
             spark_data = config.get("spark", {})
             self.spark = SparkConfig(
                 spark_url=spark_data.get("spark_url", ""),
@@ -184,7 +183,7 @@ class ConfigManager:
                 domain=spark_data.get("domain", "")
             )
             
-            # Load prompt configuration
+            # Load prompt configuration (not used in batch_processing_tool, but kept for backward compatibility)
             prompt_data = config.get("prompt", {})
             if not prompt_data:
                 # Fallback to spark section for prompt (backward compatibility)

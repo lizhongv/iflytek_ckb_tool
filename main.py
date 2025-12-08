@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Import batch processing modules
 from batch_processing_tool.main import process_batch
 from batch_processing_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
-from conf.settings import config_manager
+from batch_processing_tool.config import config_manager
 
 # Import data analysis modules
 from data_analysis_tools.main import DataAnalysisTool
@@ -48,6 +48,35 @@ from data_analysis_tools.models import AnalysisInput, AnalysisResult
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
 
+# def parse_arguments():
+#     """Parse command line arguments"""
+#     parser = argparse.ArgumentParser(description='Integrated batch processing and data analysis tool')
+    
+#     # Required parameters
+#     parser.add_argument('--file_path', type=str, required=False, default=r"data\test_examples.xlsx", help='Input Excel file path')
+#     parser.add_argument('--query_selected', type=str, default='true', help='Whether to use query field (must be true)')
+    
+#     # Optional field selections
+#     parser.add_argument('--chunk_selected', type=str, default='false', help='Whether to use correct source field')
+#     parser.add_argument('--answer_selected', type=str, default='false', help='Whether to use correct answer field')
+    
+#     # Analysis module switches
+#     parser.add_argument('--problem_analysis', type=str, default='false', help='Enable problem-side analysis')
+#     parser.add_argument('--norm_analysis', type=str, default='false', help='Enable normativity analysis (requires problem_analysis)')
+#     parser.add_argument('--set_analysis', type=str, default='false', help='Enable in/out set analysis (requires problem_analysis)')
+#     parser.add_argument('--recall_analysis', type=str, default='false', help='Enable recall-side analysis')
+#     parser.add_argument('--reply_analysis', type=str, default='false', help='Enable reply-side analysis')
+    
+#     # Optional configuration
+#     parser.add_argument('--scene_config_file', type=str, default=r"data\scene_config.xlsx", help='Scene configuration file (required if set_analysis=true)')
+#     parser.add_argument('--parallel_execution', type=str, default='true', help='Use parallel execution for analysis')
+    
+#     # Batch processing configuration (optional, can use config file)
+#     parser.add_argument('--batch_config', type=str, default=None, help='Batch processing config file path')
+    
+#     return parser.parse_args()
+
+
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Integrated batch processing and data analysis tool')
@@ -57,15 +86,15 @@ def parse_arguments():
     parser.add_argument('--query_selected', type=str, default='true', help='Whether to use query field (must be true)')
     
     # Optional field selections
-    parser.add_argument('--chunk_selected', type=str, default='false', help='Whether to use correct source field')
-    parser.add_argument('--answer_selected', type=str, default='false', help='Whether to use correct answer field')
+    parser.add_argument('--chunk_selected', type=str, default='true', help='Whether to use correct source field')
+    parser.add_argument('--answer_selected', type=str, default='true', help='Whether to use correct answer field')
     
     # Analysis module switches
-    parser.add_argument('--problem_analysis', type=str, default='false', help='Enable problem-side analysis')
-    parser.add_argument('--norm_analysis', type=str, default='false', help='Enable normativity analysis (requires problem_analysis)')
-    parser.add_argument('--set_analysis', type=str, default='false', help='Enable in/out set analysis (requires problem_analysis)')
-    parser.add_argument('--recall_analysis', type=str, default='false', help='Enable recall-side analysis')
-    parser.add_argument('--reply_analysis', type=str, default='false', help='Enable reply-side analysis')
+    parser.add_argument('--problem_analysis', type=str, default='true', help='Enable problem-side analysis')
+    parser.add_argument('--norm_analysis', type=str, default='true', help='Enable normativity analysis (requires problem_analysis)')
+    parser.add_argument('--set_analysis', type=str, default='true', help='Enable in/out set analysis (requires problem_analysis)')
+    parser.add_argument('--recall_analysis', type=str, default='true', help='Enable recall-side analysis')
+    parser.add_argument('--reply_analysis', type=str, default='true', help='Enable reply-side analysis')
     
     # Optional configuration
     parser.add_argument('--scene_config_file', type=str, default=r"data\scene_config.xlsx", help='Scene configuration file (required if set_analysis=true)')
@@ -75,7 +104,6 @@ def parse_arguments():
     parser.add_argument('--batch_config', type=str, default=None, help='Batch processing config file path')
     
     return parser.parse_args()
-
 
 def convert_bool_arg(value):
     """Convert string argument to boolean"""
@@ -140,7 +168,8 @@ def convert_batch_results_to_analysis_inputs(
 
 def convert_analysis_results_to_excel_data(
     batch_groups: list[ConversationGroup],
-    analysis_results: list[AnalysisResult]
+    analysis_results: list[AnalysisResult],
+    input_file_path: Optional[str] = None
 ) -> list[dict]:
     """
     Convert batch processing results and analysis results to Excel format
@@ -148,6 +177,7 @@ def convert_analysis_results_to_excel_data(
     Args:
         batch_groups: List of ConversationGroup from batch processing
         analysis_results: List of AnalysisResult from data analysis
+        input_file_path: Optional input file path to detect source column count
         
     Returns:
         List of dictionaries for Excel output
@@ -155,11 +185,60 @@ def convert_analysis_results_to_excel_data(
     excel_data = []
     
     # Create a mapping from question to analysis result
+    # Use stripped question as key to handle whitespace differences
     analysis_map = {}
     for result in analysis_results:
         question = result.input_data.question
         if question:
+            # Normalize question by stripping whitespace for matching
+            normalized_question = question.strip()
+            analysis_map[normalized_question] = result
+            # Also store original question as key for exact match
             analysis_map[question] = result
+    
+    logger.info(f"Created analysis map with {len(analysis_map)} entries from {len(analysis_results)} analysis results")
+    
+    # Determine maximum number of source columns
+    # 1. Check from batch processing results
+    max_sources_from_batch = 0
+    for group in batch_groups:
+        for task in group.get_tasks():
+            if task.sources:
+                max_sources_from_batch = max(max_sources_from_batch, len(task.sources))
+    
+    # 2. Check from analysis results
+    max_sources_from_analysis = 0
+    for result in analysis_results:
+        if result.input_data.sources:
+            max_sources_from_analysis = max(max_sources_from_analysis, len(result.input_data.sources))
+    
+    # 3. Check from input file if provided
+    max_sources_from_input = 0
+    if input_file_path and os.path.exists(input_file_path):
+        try:
+            import pandas as pd
+            input_df = pd.read_excel(input_file_path, sheet_name='Sheet1')
+            for col in input_df.columns:
+                if str(col).startswith('溯源'):
+                    try:
+                        num_str = str(col).replace('溯源', '').strip()
+                        if num_str.isdigit():
+                            max_sources_from_input = max(max_sources_from_input, int(num_str))
+                    except:
+                        pass
+        except Exception as e:
+            logger.warning(f"Failed to read input file for source column detection: {e}")
+    
+    # Use the maximum of all sources
+    max_sources = max(
+        config_manager.mission.knowledge_num,  # From config
+        max_sources_from_batch,  # From batch processing results
+        max_sources_from_analysis,  # From analysis results
+        max_sources_from_input  # From input file
+    )
+    logger.info(f"Using {max_sources} source columns (from config: {config_manager.mission.knowledge_num}, "
+                f"from batch: {max_sources_from_batch}, from analysis: {max_sources_from_analysis}, "
+                f"from input: {max_sources_from_input})")
     
     # Process batch groups and merge with analysis results
     for group in batch_groups:
@@ -167,13 +246,13 @@ def convert_analysis_results_to_excel_data(
             row_data = {}
             
             # Basic fields from batch processing
+            # Note: batch_processing_tool uses '用户问题', but we use '问题' for consistency
             row_data['对话ID'] = group.conversation_id if group.conversation_id else ''
             row_data['问题'] = task.question if task.question else ''
             row_data['参考溯源'] = task.correct_source if task.correct_source else ''
             row_data['参考答案'] = task.correct_answer if task.correct_answer else ''
             
-            # Source fields (溯源1, 溯源2, ...)
-            max_sources = config_manager.mission.knowledge_num
+            # Source fields (溯源1, 溯源2, ...) - dynamic based on max_sources
             for i in range(1, max_sources + 1):
                 if task.sources and i <= len(task.sources):
                     row_data[f'溯源{i}'] = task.sources[i - 1] if task.sources[i - 1] else ''
@@ -186,13 +265,18 @@ def convert_analysis_results_to_excel_data(
             row_data['SessionId'] = task.session_id if task.session_id else ''
             
             # Analysis results (if available)
+            # Try exact match first, then normalized match
             analysis_result = analysis_map.get(task.question)
+            if not analysis_result and task.question:
+                normalized_question = task.question.strip()
+                analysis_result = analysis_map.get(normalized_question)
+            
             if analysis_result:
-                # Problem analysis results
-                if analysis_result.problem_analysis:
-                    row_data['是否规范'] = analysis_result.problem_analysis.is_normative if analysis_result.problem_analysis.is_normative is not None else ''
-                    row_data['问题类型'] = analysis_result.problem_analysis.problem_type if analysis_result.problem_analysis.problem_type else ''
-                    row_data['问题原因'] = analysis_result.problem_analysis.reason if analysis_result.problem_analysis.reason else ''
+                # Norm analysis results (problem-side normativity analysis)
+                if analysis_result.norm_analysis:
+                    row_data['是否规范'] = analysis_result.norm_analysis.is_normative if analysis_result.norm_analysis.is_normative is not None else ''
+                    row_data['问题类型'] = analysis_result.norm_analysis.problem_type if analysis_result.norm_analysis.problem_type else ''
+                    row_data['问题原因'] = analysis_result.norm_analysis.reason if analysis_result.norm_analysis.reason else ''
                 else:
                     row_data['是否规范'] = ''
                     row_data['问题类型'] = ''
@@ -283,6 +367,11 @@ async def main() -> dict:
         reply_analysis = convert_bool_arg(args.reply_analysis)
         parallel_execution = convert_bool_arg(args.parallel_execution)
         
+        # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
+        if norm_analysis or set_analysis:
+            problem_analysis = True
+            logger.info("Auto-enabled problem_analysis because norm_analysis or set_analysis is enabled")
+        
         # Also support JSON config file (can override command line arguments)
         if args.batch_config and args.batch_config.endswith('.json'):
             try:
@@ -302,6 +391,11 @@ async def main() -> dict:
                     recall_analysis = convert_bool_arg(config_dict.get('recall_analysis', recall_analysis))
                     reply_analysis = convert_bool_arg(config_dict.get('reply_analysis', reply_analysis))
                     parallel_execution = convert_bool_arg(config_dict.get('parallel_execution', parallel_execution))
+                    
+                    # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
+                    if norm_analysis or set_analysis:
+                        problem_analysis = True
+                        logger.info("Auto-enabled problem_analysis because norm_analysis or set_analysis is enabled")
                 logger.info(f"Loaded configuration from JSON file: {args.batch_config}")
             except Exception as e:
                 logger.warning(f"Failed to load JSON config file: {e}, using command line arguments")
@@ -321,8 +415,15 @@ async def main() -> dict:
         
         logger.info(f"Starting integrated batch processing and analysis")
         logger.info(f"Input file: {file_path}")
-        logger.info(f"Problem analysis: {problem_analysis}, Norm: {norm_analysis}, Set: {set_analysis}")
-        logger.info(f"Recall analysis: {recall_analysis}, Reply analysis: {reply_analysis}")
+        logger.info(f"Analysis parameters:")
+        logger.info(f"  - problem_analysis: {problem_analysis}")
+        logger.info(f"  - norm_analysis: {norm_analysis}")
+        logger.info(f"  - set_analysis: {set_analysis}")
+        logger.info(f"  - recall_analysis: {recall_analysis}")
+        logger.info(f"  - reply_analysis: {reply_analysis}")
+        logger.info(f"  - chunk_selected: {chunk_selected}")
+        logger.info(f"  - answer_selected: {answer_selected}")
+        logger.info(f"  - scene_config_file: {scene_config_file}")
         
         # Step 1: Read input file for batch processing
         logger.info("Step 1: Reading input file for batch processing...")
@@ -383,8 +484,20 @@ async def main() -> dict:
         logger.info(f"Converted {len(analysis_inputs)} records for analysis")
         
         # Step 5: Perform data analysis on batch processing results (if any analysis is enabled)
+        # Note: problem_analysis includes norm_analysis and set_analysis
         analysis_results = []
-        if problem_analysis or recall_analysis or reply_analysis:
+        
+        # Check if any analysis is enabled
+        any_analysis_enabled = problem_analysis or norm_analysis or set_analysis or recall_analysis or reply_analysis
+        logger.info(f"Step 5: Checking analysis conditions...")
+        logger.info(f"  - problem_analysis: {problem_analysis}")
+        logger.info(f"  - norm_analysis: {norm_analysis}")
+        logger.info(f"  - set_analysis: {set_analysis}")
+        logger.info(f"  - recall_analysis: {recall_analysis}")
+        logger.info(f"  - reply_analysis: {reply_analysis}")
+        logger.info(f"  - Any analysis enabled: {any_analysis_enabled}")
+        
+        if any_analysis_enabled:
             logger.info("Step 5: Starting data analysis on batch processing results...")
             
             # Create analysis config with all enabled analysis modules
@@ -437,17 +550,48 @@ async def main() -> dict:
                 return create_response(False, ErrorCode.ANALYSIS_TASK_FAILED, str(e))
             
             logger.info(f"Data analysis completed: {len(analysis_results)} results")
+            if analysis_results:
+                # Log sample of analysis results for debugging
+                sample_result = analysis_results[0]
+                logger.info(f"Sample analysis result - Question: {sample_result.input_data.question[:50]}...")
+                logger.info(f"  - norm_analysis: {sample_result.norm_analysis is not None}")
+                logger.info(f"  - set_analysis: {sample_result.set_analysis is not None}")
+                logger.info(f"  - recall_analysis: {sample_result.recall_analysis is not None}")
+                logger.info(f"  - response_analysis: {sample_result.response_analysis is not None}")
+            else:
+                logger.warning("Analysis completed but returned empty results list!")
         else:
-            logger.info("Step 5: Skipping data analysis (no analysis modules enabled)")
+            logger.warning("Step 5: Skipping data analysis (no analysis modules enabled)")
+            logger.warning("  To enable analysis, use command line arguments:")
+            logger.warning("    --problem_analysis=true (for problem-side analysis)")
+            logger.warning("    --norm_analysis=true (for normativity analysis, requires problem_analysis)")
+            logger.warning("    --set_analysis=true (for in/out set analysis, requires problem_analysis)")
+            logger.warning("    --recall_analysis=true (for recall-side analysis)")
+            logger.warning("    --reply_analysis=true (for reply-side analysis)")
         
         # Step 6: Merge batch processing results with analysis results
         logger.info("Step 6: Merging batch processing results with analysis results...")
+        logger.info(f"Merging {len(processed_groups)} batch groups with {len(analysis_results)} analysis results")
+        
+        # Count tasks for logging
+        total_tasks = sum(len(group.get_tasks()) for group in processed_groups)
+        logger.info(f"Total tasks to merge: {total_tasks}")
+        
+        # Log sample questions for debugging
+        if processed_groups:
+            sample_group = processed_groups[0]
+            sample_tasks = sample_group.get_tasks()
+            if sample_tasks:
+                logger.info(f"Sample batch task question: {sample_tasks[0].question[:50]}...")
+        if analysis_results:
+            logger.info(f"Sample analysis result question: {analysis_results[0].input_data.question[:50]}...")
         
         # Step 7: Save final integrated results to Excel
         logger.info("Step 7: Saving final integrated results to Excel...")
         
         # Convert to Excel format
-        excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results)
+        excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
+        logger.info(f"Converted to Excel format: {len(excel_data)} rows")
         
         # Generate output file path
         input_path = Path(file_path)
@@ -463,8 +607,22 @@ async def main() -> dict:
             df = pd.DataFrame(excel_data)
             
             # Define column order
+            # Determine max_sources from the actual data
             base_columns = ['对话ID', '问题', '参考溯源', '参考答案']
-            max_sources = config_manager.mission.knowledge_num
+            # Find max source column number from the data
+            max_sources = 0
+            for row in excel_data:
+                for col_name in row.keys():
+                    if str(col_name).startswith('溯源'):
+                        try:
+                            num_str = str(col_name).replace('溯源', '').strip()
+                            if num_str.isdigit():
+                                max_sources = max(max_sources, int(num_str))
+                        except:
+                            pass
+            # If no sources found, use config default
+            if max_sources == 0:
+                max_sources = config_manager.mission.knowledge_num
             source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
             result_columns = ['模型回复', 'RequestId', 'SessionId']
             analysis_columns = [
