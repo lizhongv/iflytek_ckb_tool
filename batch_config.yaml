@@ -12,7 +12,7 @@ server:
 
   # 认证信息配置
   login_name: "ckbAdmin"              # 当前使用的登录用户名
-  password: "IFlytek2024"             # 当前使用的登录密码
+  password: "IFlytek2025"             # 当前使用的登录密码
 
   # 网络配置
   intranet: false                     # 是否使用内网 (true: 内网, false: 外网)

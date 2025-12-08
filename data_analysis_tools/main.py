@@ -38,23 +38,40 @@ from conf.logging import setup_root_logging
 setup_root_logging(
     log_dir="log",
     console_level="INFO",
-    file_level="DEBUG",
+    file_level="INFO",
     root_level="DEBUG",
-    use_timestamp=True,
-    log_filename_prefix="batch_processing_tool"
+    use_timestamp=False,
+    log_filename_prefix="data_analysis_tool"
 )
 
-from data_analysis_tools.excel_handler import ExcelHandler
-from data_analysis_tools.analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
-from data_analysis_tools.models import AnalysisInput, AnalysisResult, RecallAnalysisResult
-from data_analysis_tools.config import AnalysisConfig
-from data_analysis_tools.scene_config import SceneConfigLoader
-from data_analysis_tools.analysis_executors import (
-    NormAnalysisExecutor,
-    RecallAnalysisExecutor,
-    ResponseAnalysisExecutor,
-    AnalysisTaskResult
-)
+# Handle imports - use absolute imports when running as script, relative imports when used as module
+if __name__ == "__main__":
+    # When running directly, use absolute imports
+    from data_analysis_tools.excel_handler import ExcelHandler
+    from data_analysis_tools.analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
+    from data_analysis_tools.models import AnalysisInput, AnalysisResult, RecallAnalysisResult
+    from data_analysis_tools.config import AnalysisConfig
+    from data_analysis_tools.scene_config import SceneConfigLoader
+    from data_analysis_tools.analysis_executors import (
+        NormAnalysisExecutor,
+        RecallAnalysisExecutor,
+        ResponseAnalysisExecutor,
+        AnalysisTaskResult
+    )
+else:
+    # When imported as module, use relative imports
+    from .excel_handler import ExcelHandler
+    from .analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
+    from .models import AnalysisInput, AnalysisResult, RecallAnalysisResult
+    from .config import AnalysisConfig
+    from .scene_config import SceneConfigLoader
+    from .analysis_executors import (
+        NormAnalysisExecutor,
+        RecallAnalysisExecutor,
+        ResponseAnalysisExecutor,
+        AnalysisTaskResult
+    )
+
 from conf.error_codes import ErrorCode, create_response, get_success_response
 import logging
 
@@ -127,8 +144,15 @@ class DataAnalysisTool:
         enabled = self.config.get_enabled_analyses()
         
         total = len(inputs)
-        logger.info(f"Starting analysis of {total} records...")
+        logger.info(f"[ANALYSIS_START] total_records={total}")
         logger.info(f"Enabled modules: {[k for k, v in enabled.items() if v]}")
+        
+        # Track progress for each analysis type separately
+        norm_processed = 0
+        set_processed = 0
+        recall_processed = 0
+        reply_processed = 0
+        overall_processed = 0
         
         for idx, input_data in enumerate(inputs, 1):
             logger.info(f"Analyzing record {idx}/{total}...")
@@ -145,12 +169,18 @@ class DataAnalysisTool:
                     logger.info(f"  Executing problem normativity analysis...")
                     problem_result = self.norm_analyzer.analyze(input_data.question)
                     result.norm_analysis = problem_result
+                    norm_processed += 1
+                    progress_percent = (norm_processed / total * 100) if total > 0 else 0
+                    logger.info(f"[NORM_ANALYSIS_PROGRESS] processed={norm_processed}/{total} ({progress_percent:.1f}%)")
                 
                 # 1.2 In/out set analysis (if set_analysis is True)
                 if enabled["set_analysis"]:
                     logger.info(f"  Executing problem in/out set analysis...")
                     set_result = self.set_analyzer.analyze(input_data.question)
                     result.set_analysis = set_result
+                    set_processed += 1
+                    progress_percent = (set_processed / total * 100) if total > 0 else 0
+                    logger.info(f"[SET_ANALYSIS_PROGRESS] processed={set_processed}/{total} ({progress_percent:.1f}%)")
             
             # 3. Recall-side analysis - retrieval judgment
             if enabled["recall_analysis"]:
@@ -184,6 +214,10 @@ class DataAnalysisTool:
                             result.recall_analysis.is_retrieval_correct_by_answer = retrieval_result[0]
                             result.recall_analysis.retrieval_judgment_type_by_answer = retrieval_result[1]
                             result.recall_analysis.retrieval_reason_by_answer = retrieval_result[2]
+                    
+                    recall_processed += 1
+                    progress_percent = (recall_processed / total * 100) if total > 0 else 0
+                    logger.info(f"[RECALL_ANALYSIS_PROGRESS] processed={recall_processed}/{total} ({progress_percent:.1f}%)")
             
             # 4. Reply-side analysis
             if enabled["reply_analysis"] and input_data.model_response:
@@ -196,13 +230,21 @@ class DataAnalysisTool:
                 )
                 if response_result:
                     result.response_analysis = response_result
+                    reply_processed += 1
+                    progress_percent = (reply_processed / total * 100) if total > 0 else 0
+                    logger.info(f"[REPLY_ANALYSIS_PROGRESS] processed={reply_processed}/{total} ({progress_percent:.1f}%)")
                 else:
                     logger.warning(f"  Skipping response analysis: missing required fields")
             
             results.append(result)
             logger.info(f"  Record {idx} analysis completed")
+            
+            # Track overall progress
+            overall_processed += 1
+            progress_percent = (overall_processed / total * 100) if total > 0 else 0
+            logger.info(f"[DATA_ANALYSIS_PROGRESS] processed={overall_processed}/{total} ({progress_percent:.1f}%)")
         
-        logger.info(f"All data analysis completed, {len(results)} results")
+        logger.info(f"[ANALYSIS_COMPLETE] total_processed={len(results)}/{total}")
         return results
     
     async def analyze_parallel(self, inputs: List[AnalysisInput]) -> List[AnalysisResult]:
@@ -217,7 +259,7 @@ class DataAnalysisTool:
             List of analysis results
         """
         total = len(inputs)
-        logger.info(f"Starting parallel analysis of {total} records...")
+        logger.info(f"[ANALYSIS_START] total_records={total} (parallel mode)")
         enabled = self.config.get_enabled_analyses()
         logger.info(f"Enabled modules: {[k for k, v in enabled.items() if v]}")
         
@@ -281,8 +323,17 @@ class DataAnalysisTool:
                         elif task_name == "response":
                             if result_data.response_analysis:
                                 results[row_idx].response_analysis = result_data.response_analysis
+            
+            # Log overall progress after all tasks complete
+            # Count records that have at least one analysis completed
+            processed_count = sum(1 for r in results if (
+                r.norm_analysis or r.set_analysis or 
+                r.recall_analysis or r.response_analysis
+            ))
+            progress_percent = (processed_count / total * 100) if total > 0 else 0
+            logger.info(f"[DATA_ANALYSIS_PROGRESS] processed={processed_count}/{total} ({progress_percent:.1f}%)")
         
-        logger.info(f"Parallel analysis completed, {len(results)} results")
+        logger.info(f"[ANALYSIS_COMPLETE] total_processed={len(results)}/{total} (parallel mode)")
         return results
     
     async def _analyze_problem_parallel(self, inputs: List[AnalysisInput]) -> List[AnalysisTaskResult]:
@@ -399,9 +450,17 @@ async def main() -> dict:
     """
     import sys
     import json
-    from data_analysis_tools.config import AnalysisConfig
+    import uuid
+    # AnalysisConfig is already imported at module level
     
     try:
+        # Generate task_id for this analysis run and set it in logging context
+        # This should be done at the very beginning so all logs include task_id
+        from conf.logging import task_id_context
+        # task_id = str(uuid.uuid4())[:16]
+        task_id = "491cf155-3a65-44"
+        task_id_context.set(task_id)
+        logger.info(f"[TASK_START] task_id={task_id}")
         # Parse command line arguments or use default config
         if len(sys.argv) > 1:
             # If JSON config file provided
@@ -436,7 +495,7 @@ async def main() -> dict:
             # Default configuration
             config = AnalysisConfig(
                 query_selected=True,
-                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\test_examples_output_20251207_193231.xlsx",
+                file_path=r"C:\Users\zhongli2\Documents\code\ckb_qa_tool_v0.1.1_origin\data\test_examples_output_20251208_113623.xlsx",
                 chunk_selected=True,
                 answer_selected=True,
                 problem_analysis=True,

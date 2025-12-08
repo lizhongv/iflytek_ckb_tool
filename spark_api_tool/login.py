@@ -740,7 +740,7 @@ async def login_knowledge() -> Tuple[bool, Optional[str], Optional[str], Optiona
         success, error_code = await login_manager.login()
         
         if success:
-            logger.info(f"Login test successful\n"
+            logger.debug(f"Login test successful\n"
             f"- User ID: {login_manager.user_id}\n"
             f"- Tenant ID: {login_manager.tenant_id}\n"
             f"- Redirect server: {login_manager.redirect_ip}:{login_manager.redirect_port}"

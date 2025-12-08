@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 from excel_io.write_result import write_result, save_result
-from batch_processing_tool.config import config_manager
+from spark_api_tool.config import config_manager
 import logging
 
 logger = logging.getLogger(__name__)

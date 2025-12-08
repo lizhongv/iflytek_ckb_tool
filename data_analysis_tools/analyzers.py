@@ -11,26 +11,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Load environment variables from .env file before importing other modules
-try:
-    from dotenv import load_dotenv
-    # Load .env file from project root
-    project_root = Path(__file__).parent.parent
-    env_file = project_root / '.env'
-    if env_file.exists():
-        load_dotenv(env_file, override=True)
-        print(f"[analyzers.py] Loaded environment variables from: {env_file}")
-    else:
-        # Try to load from current directory
-        load_dotenv(override=True)
-        print(f"[analyzers.py] .env file not found at {env_file}, trying current directory")
-except ImportError:
-    # If python-dotenv is not installed, skip loading .env file
-    print("[analyzers.py] python-dotenv not installed, using system environment variables")
-except Exception as e:
-    print(f"[analyzers.py] Error loading .env file: {e}")
+# Environment variables should be loaded in main.py before importing this module
+# No need to load again here to avoid duplicate loading and log messages
 
-from data_analysis_tools.models import (
+from .models import (
     AnalysisInput,
     AnalysisResult,
     NormAnalysisResult,
@@ -38,7 +22,7 @@ from data_analysis_tools.models import (
     RecallAnalysisResult,
     ResponseAnalysisResult
 )
-from data_analysis_tools.prompts import (
+from .prompts import (
     PROBLEM_NORMATIVITY_PROMPT,
     PROBLEM_IN_OUT_SET_PROMPT,
     RECALL_JUDGMENT_PROMPT,
@@ -46,7 +30,7 @@ from data_analysis_tools.prompts import (
     RESPONSE_ACCURACY_PROMPT,
     RESPONSE_ACCURACY_BY_SOURCE_PROMPT
 )
-from data_analysis_tools.parsers import (
+from .parsers import (
     parse_norm_analysis,
     parse_set_analysis,
     parse_recall_judgment,

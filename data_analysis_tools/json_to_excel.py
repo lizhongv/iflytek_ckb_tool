@@ -31,7 +31,7 @@ def flatten_json_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         
         # Basic fields
         row['序号'] = item.get('序号', '')
-        row['用户问题'] = item.get('用户问题', '')
+        row['用户问题'] = item.get('用户问题', item.get('问题', ''))  # 支持"用户问题"或"问题"字段
         row['正确溯源'] = item.get('正确溯源', item.get('参考知识', ''))
         row['正确答案'] = item.get('正确答案', item.get('参考答案', ''))
         row['taskid'] = item.get('taskid', '')

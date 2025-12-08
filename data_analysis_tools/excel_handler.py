@@ -12,7 +12,7 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data_analysis_tools.models import AnalysisInput, AnalysisResult
+from .models import AnalysisInput, AnalysisResult
 import logging
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ class ExcelHandler:
             row_data = {}
             
             # Basic input fields - use Chinese column names
-            row_data['问题'] = result.input_data.question if result.input_data.question else ''
+            row_data['用户问题'] = result.input_data.question if result.input_data.question else ''
             row_data['参考溯源'] = result.input_data.correct_source if result.input_data.correct_source else ''
             row_data['参考答案'] = result.input_data.correct_answer if result.input_data.correct_answer else ''
             
@@ -190,56 +190,57 @@ class ExcelHandler:
             
             # Problem analysis results - use Chinese column names
             if result.norm_analysis:
-                row_data['是否规范'] = result.norm_analysis.is_normative if result.norm_analysis.is_normative is not None else ''
-                row_data['问题类型'] = result.norm_analysis.problem_type if result.norm_analysis.problem_type else ''
-                row_data['问题原因'] = result.norm_analysis.reason if result.norm_analysis.reason else ''
+                row_data['问题是否规范'] = result.norm_analysis.is_normative if result.norm_analysis.is_normative is not None else ''
+                row_data['问题（非）规范性类型'] = result.norm_analysis.problem_type if result.norm_analysis.problem_type else ''
+                row_data['问题（非）规范性理由'] = result.norm_analysis.reason if result.norm_analysis.reason else ''
             else:
-                row_data['是否规范'] = ''
-                row_data['问题类型'] = ''
-                row_data['问题原因'] = ''
+                row_data['问题是否规范'] = ''
+                row_data['问题（非）规范性类型'] = ''
+                row_data['问题（非）规范性理由'] = ''
             
             # Set analysis results - in/out set judgment - use Chinese column names
             if result.set_analysis:
-                row_data['是否在集'] = result.set_analysis.is_in_set if result.set_analysis.is_in_set is not None else ''
-                row_data['在集类型'] = result.set_analysis.in_out_type if result.set_analysis.in_out_type else ''
-                row_data['在集原因'] = result.set_analysis.reason if result.set_analysis.reason else ''
+                row_data['问题是否在集'] = result.set_analysis.is_in_set if result.set_analysis.is_in_set is not None else ''
+                row_data['问题（非）在集类型'] = result.set_analysis.in_out_type if result.set_analysis.in_out_type else ''
+                row_data['问题（非）在集理由'] = result.set_analysis.reason if result.set_analysis.reason else ''
             else:
-                row_data['是否在集'] = ''
-                row_data['在集类型'] = ''
-                row_data['在集原因'] = ''
+                row_data['问题是否在集'] = ''
+                row_data['问题（非）在集类型'] = ''
+                row_data['问题（非）在集理由'] = ''
             
             # Recall analysis results - retrieval judgment (by source) - use Chinese column names
             if result.recall_analysis and result.recall_analysis.is_retrieval_correct is not None:
+                # is_retrieval_correct: 1=正确(CorrectRecall), 0=错误(其他类型如NoRecall, MultiIntentIncomplete等)
                 row_data['检索是否正确'] = result.recall_analysis.is_retrieval_correct
-                row_data['检索判断类型'] = result.recall_analysis.retrieval_judgment_type if result.recall_analysis.retrieval_judgment_type else ''
-                row_data['检索原因'] = result.recall_analysis.retrieval_reason if result.recall_analysis.retrieval_reason else ''
+                row_data['检索正误类型'] = result.recall_analysis.retrieval_judgment_type if result.recall_analysis.retrieval_judgment_type else ''
+                row_data['检索正误理由'] = result.recall_analysis.retrieval_reason if result.recall_analysis.retrieval_reason else ''
             else:
                 row_data['检索是否正确'] = ''
-                row_data['检索判断类型'] = ''
-                row_data['检索原因'] = ''
+                row_data['检索正误类型'] = ''
+                row_data['检索正误理由'] = ''
             
             # Response analysis results (by answer) - use Chinese column names
             if result.response_analysis and result.response_analysis.is_response_correct is not None:
                 row_data['回复是否正确'] = result.response_analysis.is_response_correct
-                row_data['回复判断类型'] = result.response_analysis.response_judgment_type if result.response_analysis.response_judgment_type else ''
-                row_data['回复原因'] = result.response_analysis.response_reason if result.response_analysis.response_reason else ''
+                row_data['回复正误类型'] = result.response_analysis.response_judgment_type if result.response_analysis.response_judgment_type else ''
+                row_data['回复正误理由'] = result.response_analysis.response_reason if result.response_analysis.response_reason else ''
             else:
                 row_data['回复是否正确'] = ''
-                row_data['回复判断类型'] = ''
-                row_data['回复原因'] = ''
+                row_data['回复正误类型'] = ''
+                row_data['回复正误理由'] = ''
             
             result_data.append(row_data)
         
         result_df = pd.DataFrame(result_data)
         
         # Define column order - use Chinese column names
-        base_columns = ['问题', '参考溯源', '参考答案']
+        base_columns = ['用户问题', '参考溯源', '参考答案']
         source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)] if max_sources > 0 else []
         analysis_columns = [
-            '是否规范', '问题类型', '问题原因',
-            '是否在集', '在集类型', '在集原因',
-            '检索是否正确', '检索判断类型', '检索原因',
-            '回复是否正确', '回复判断类型', '回复原因'
+            '问题是否规范', '问题（非）规范性类型', '问题（非）规范性理由',
+            '问题是否在集', '问题（非）在集类型', '问题（非）在集理由',
+            '检索是否正确', '检索正误类型', '检索正误理由',
+            '回复是否正确', '回复正误类型', '回复正误理由'
         ]
         column_order = base_columns + source_columns + analysis_columns
         
@@ -252,9 +253,9 @@ class ExcelHandler:
             # Save to data directory with formatted timestamp in filename
             from datetime import datetime
             
-            # Get project root directory (current file is in data_analysis_tools, go up one level to project root)
+            # Get project root directory (current file is in data_analysis_tool, go up one level to project root)
             current_file_dir = Path(__file__).parent
-            project_root = current_file_dir.parent  # From data_analysis_tools to project root
+            project_root = current_file_dir.parent  # From data_analysis_tool to project root
             data_dir = project_root / 'data'
             
             # Ensure data directory exists

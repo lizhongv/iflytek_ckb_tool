@@ -114,7 +114,7 @@ class CkbClient:
                     public_key = response_json_data.get("data").get("publicKey")
                     public_key_b64 = base64.b64decode(public_key)
                     public_key_b64 = load_der_public_key(public_key_b64, backend=default_backend())
-                    logger.info(f"Successfully added Spark Knowledge Base app, public_key loaded")
+                    logger.debug(f"Successfully added Spark Knowledge Base app, public_key loaded")
                     return True, public_key_b64
 
             except Exception as e:
@@ -165,7 +165,7 @@ class CkbClient:
                         return False, message
 
                     data = response_json_data.get("data")
-                    logger.info(f"Spark Knowledge Base login successful")
+                    logger.debug(f"Spark Knowledge Base login successful")
                     return True, data
 
             except Exception as e:

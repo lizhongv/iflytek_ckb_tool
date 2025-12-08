@@ -1,15 +1,15 @@
 """
-Batch processing tool package
+Spark API tool package
 Processes questions through Spark Knowledge Base and collects answers and retrieval sources
 """
 
 __version__ = "0.1.0"
 
-from batch_processing_tool.main import process_batch
-from batch_processing_tool.excel_io import ExcelHandler, ConversationGroup, ConversationTask
-from batch_processing_tool.ckb import CkbClient
-from batch_processing_tool.login import LoginManager
-from batch_processing_tool.config import config_manager
+from .main import process_batch
+from .excel_io import ExcelHandler, ConversationGroup, ConversationTask
+from .ckb import CkbClient
+from .login import LoginManager
+from .config import config_manager
 
 __all__ = [
     'process_batch',

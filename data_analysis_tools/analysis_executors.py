@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Optional
 from dataclasses import dataclass
 
-from data_analysis_tools.models import (
+from .models import (
     AnalysisInput,
     AnalysisResult,
     NormAnalysisResult,
@@ -16,7 +16,7 @@ from data_analysis_tools.models import (
     RecallAnalysisResult,
     ResponseAnalysisResult
 )
-from data_analysis_tools.analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
+from .analyzers import NormAnalyzer, SetAnalyzer, RecallAnalyzer, ResponseAnalyzer
 from conf.error_codes import ErrorCode
 import logging
 
@@ -106,10 +106,25 @@ class NormAnalysisExecutor:
         Returns:
             List of analysis results
         """
+        total = len(inputs)
         results = []
+        norm_processed = 0
+        set_processed = 0
+        
         for idx, input_data in enumerate(inputs):
             result = await self.analyze_single(idx, input_data)
             results.append(result)
+            
+            # Track progress for norm_analysis and set_analysis separately
+            if self.enabled.get("norm_analysis", False) and result.norm_analysis:
+                norm_processed += 1
+                progress_percent = (norm_processed / total * 100) if total > 0 else 0
+                logger.info(f"[NORM_ANALYSIS_PROGRESS] processed={norm_processed}/{total} ({progress_percent:.1f}%)")
+            
+            if self.enabled.get("set_analysis", False) and result.set_analysis:
+                set_processed += 1
+                progress_percent = (set_processed / total * 100) if total > 0 else 0
+                logger.info(f"[SET_ANALYSIS_PROGRESS] processed={set_processed}/{total} ({progress_percent:.1f}%)")
         return results
 
 
@@ -202,10 +217,18 @@ class RecallAnalysisExecutor:
         Returns:
             List of analysis results
         """
+        total = len(inputs)
         results = []
+        processed_count = 0
         for idx, input_data in enumerate(inputs):
             result = await self.analyze_single(idx, input_data)
             results.append(result)
+            
+            # Track progress for recall_analysis
+            if self.enabled.get("recall_analysis", False) and result.recall_analysis:
+                processed_count += 1
+                progress_percent = (processed_count / total * 100) if total > 0 else 0
+                logger.info(f"[RECALL_ANALYSIS_PROGRESS] processed={processed_count}/{total} ({progress_percent:.1f}%)")
         return results
 
 
@@ -275,9 +298,17 @@ class ResponseAnalysisExecutor:
         Returns:
             List of analysis results
         """
+        total = len(inputs)
         results = []
+        processed_count = 0
         for idx, input_data in enumerate(inputs):
             result = await self.analyze_single(idx, input_data)
             results.append(result)
+            
+            # Track progress for reply_analysis
+            if self.enabled.get("reply_analysis", False) and result.response_analysis:
+                processed_count += 1
+                progress_percent = (processed_count / total * 100) if total > 0 else 0
+                logger.info(f"[REPLY_ANALYSIS_PROGRESS] processed={processed_count}/{total} ({progress_percent:.1f}%)")
         return results
 

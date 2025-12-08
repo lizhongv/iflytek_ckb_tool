@@ -34,15 +34,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import batch processing modules
-from batch_processing_tool.main import process_batch
-from batch_processing_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
-from batch_processing_tool.config import config_manager
+from spark_api_tool.main import process_batch
+from spark_api_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
+from spark_api_tool.config import config_manager
 
 # Import data analysis modules
-from data_analysis_tools.main import DataAnalysisTool
-from data_analysis_tools.config import AnalysisConfig
-from data_analysis_tools.excel_handler import ExcelHandler as AnalysisExcelHandler
-from data_analysis_tools.models import AnalysisInput, AnalysisResult
+from data_analysis_tool.main import DataAnalysisTool
+from data_analysis_tool.config import AnalysisConfig
+from data_analysis_tool.excel_handler import ExcelHandler as AnalysisExcelHandler
+from data_analysis_tool.models import AnalysisInput, AnalysisResult
 
 # Import error handling
 from conf.error_codes import ErrorCode, create_response, get_success_response
@@ -246,7 +246,7 @@ def convert_analysis_results_to_excel_data(
             row_data = {}
             
             # Basic fields from batch processing
-            # Note: batch_processing_tool uses '用户问题', but we use '问题' for consistency
+            # Note: spark_api_tool uses '用户问题', but we use '问题' for consistency
             row_data['对话ID'] = group.conversation_id if group.conversation_id else ''
             row_data['问题'] = task.question if task.question else ''
             row_data['参考溯源'] = task.correct_source if task.correct_source else ''

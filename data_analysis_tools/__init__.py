@@ -5,8 +5,8 @@ Six-dimensional problem analysis module
 
 __version__ = "0.1.0"
 
-from data_analysis_tools.main import DataAnalysisTool, main
-from data_analysis_tools.models import (
+from .main import DataAnalysisTool, main
+from .models import (
     AnalysisInput,
     AnalysisResult,
     NormAnalysisResult,

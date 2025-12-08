@@ -173,7 +173,7 @@ class ConfigManager:
                 auth_refresh_time_minutes=mission_data.get("auth_refresh_time_minutes", 30)  # Not used but kept for backward compatibility
             )
             
-            # Load spark configuration (not used in batch_processing_tool, but kept for backward compatibility)
+            # Load spark configuration (not used in spark_api_tool, but kept for backward compatibility)
             spark_data = config.get("spark", {})
             self.spark = SparkConfig(
                 spark_url=spark_data.get("spark_url", ""),
@@ -183,7 +183,7 @@ class ConfigManager:
                 domain=spark_data.get("domain", "")
             )
             
-            # Load prompt configuration (not used in batch_processing_tool, but kept for backward compatibility)
+            # Load prompt configuration (not used in spark_api_tool, but kept for backward compatibility)
             prompt_data = config.get("prompt", {})
             if not prompt_data:
                 # Fallback to spark section for prompt (backward compatibility)

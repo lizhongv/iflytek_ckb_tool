@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data_analysis_tools.models import (
+from .models import (
     NormAnalysisResult,
     SetAnalysisResult,
     RecallAnalysisResult,
@@ -101,7 +101,7 @@ def parse_norm_analysis(response: str) -> Optional[NormAnalysisResult]:
         
         return NormAnalysisResult(
             is_normative=is_normative,
-            problem_type=problem_type,
+            problem_type=problem_type.strip(),
             reason=reason
         )
     
@@ -247,47 +247,60 @@ def parse_recall_judgment(response: str) -> Optional[Tuple[int, str, str]]:
         # Validate and normalize judgment_type
         if judgment_type:
             judgment_type_normalized = judgment_type.strip()
+            final_type = None
             
             # Direct match
             if judgment_type_normalized in VALID_RETRIEVAL_TYPES:
-                if is_correct is not None:
-                    return (is_correct, judgment_type_normalized, reason)
+                final_type = judgment_type_normalized
             
             # Case-insensitive match
-            for valid_type in VALID_RETRIEVAL_TYPES:
-                if judgment_type_normalized.lower() == valid_type.lower():
-                    if is_correct is not None:
-                        return (is_correct, valid_type, reason)
+            if final_type is None:
+                for valid_type in VALID_RETRIEVAL_TYPES:
+                    if judgment_type_normalized.lower() == valid_type.lower():
+                        final_type = valid_type
+                        break
             
             # Try to extract from Chinese description
-            type_mapping = {
-                "完全未召回": "NoRecall",
-                "未召回": "NoRecall",
-                "召回不全面": "IncompleteRecall",
-                "不全面": "IncompleteRecall",
-                "多意图": "MultiIntentIncomplete",
-                "对比问题": "ComparisonIncomplete",
-                "对比": "ComparisonIncomplete",
-                "专业名词": "TerminologyMismatch",
-                "口语化": "TerminologyMismatch",
-                "术语": "TerminologyMismatch",
-                "知识冲突": "KnowledgeConflict",
-                "冲突": "KnowledgeConflict",
-                "召回正确": "CorrectRecall",
-                "正确": "CorrectRecall"
-            }
-            
-            for key, mapped_type in type_mapping.items():
-                if key in judgment_type_normalized:
-                    if is_correct is not None:
+            if final_type is None:
+                type_mapping = {
+                    "完全未召回": "NoRecall",
+                    "未召回": "NoRecall",
+                    "召回不全面": "IncompleteRecall",
+                    "不全面": "IncompleteRecall",
+                    "多意图": "MultiIntentIncomplete",
+                    "对比问题": "ComparisonIncomplete",
+                    "对比": "ComparisonIncomplete",
+                    "专业名词": "TerminologyMismatch",
+                    "口语化": "TerminologyMismatch",
+                    "术语": "TerminologyMismatch",
+                    "知识冲突": "KnowledgeConflict",
+                    "冲突": "KnowledgeConflict",
+                    "召回正确": "CorrectRecall",
+                    "正确": "CorrectRecall"
+                }
+                
+                for key, mapped_type in type_mapping.items():
+                    if key in judgment_type_normalized:
+                        final_type = mapped_type
                         logger.info(f"Mapped judgment type '{judgment_type}' to '{mapped_type}'")
-                        return (is_correct, mapped_type, reason)
+                        break
             
-            # If no match found, log warning but still return result
-            logger.warning(f"Invalid judgment type '{judgment_type}', expected one of: {VALID_RETRIEVAL_TYPES}")
-            if is_correct is not None:
-                # Default to original type if we can't map it
-                return (is_correct, judgment_type_normalized, reason)
+            # If we found a valid type, ensure is_correct is set correctly
+            if final_type:
+                # CorrectRecall should be 1 (correct), all others should be 0 (incorrect)
+                if final_type == "CorrectRecall":
+                    is_correct = 1
+                else:
+                    is_correct = 0
+                
+                if is_correct is not None:
+                    return (is_correct, final_type, reason)
+            else:
+                # If no match found, log warning but still return result
+                logger.warning(f"Invalid judgment type '{judgment_type}', expected one of: {VALID_RETRIEVAL_TYPES}")
+                if is_correct is not None:
+                    # Default to original type if we can't map it
+                    return (is_correct, judgment_type_normalized, reason)
         elif is_correct is not None:
             # If judgment_type is missing but we have is_correct, return with empty type
             logger.warning("Missing judgment_type in response")

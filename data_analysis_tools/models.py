@@ -25,17 +25,17 @@ class AnalysisInput:
 class NormAnalysisResult:
     """Problem analysis result"""
     is_normative: int  # Whether question is standard: 1/0 (corresponds to is_standard in prompt)
-    problem_type: str  # Question type: "Effective", "Meaningless", "Violation", "Ambiguous"
+    problem_type: str  # Question type: "Effective" (规范性问题), "Gibberish" (无意义问题), "Violation" (违规性问题), "Vague" (模糊性问题)
     reason: Optional[str] = None  # Reason
     
     @property
     def problem_type_code(self) -> int:
         """Get question type code (backward compatibility)"""
         type_mapping = {
-            "Effective": 1,
-            "Meaningless": 2,
-            "Violation": 3,
-            "Ambiguous": 4
+            "Effective": 1,      # 规范性问题
+            "Gibberish": 2,      # 无意义问题
+            "Violation": 3,      # 违规性问题
+            "Vague": 4           # 模糊性问题
         }
         return type_mapping.get(self.problem_type, 0)
 
