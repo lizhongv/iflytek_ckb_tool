@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import argparse
+import logging
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -25,12 +26,14 @@ setup_root_logging(
     console_level="INFO",
     file_level="DEBUG",
     root_level="DEBUG",
-    use_timestamp=True,
-    log_filename_prefix="ckb_qa_tool"
+    use_timestamp=False,
+    log_filename_prefix="main",
+    enable_dual_file_logging=True,
+    root_log_filename="root.log",
+    root_log_level="INFO"
 )
 
 # Import logging module for use in this file
-import logging
 logger = logging.getLogger(__name__)
 
 # Import batch processing modules
@@ -462,13 +465,13 @@ async def main() -> dict:
         try:
             # Generate intermediate output file path
             input_path = Path(file_path)
-            output_dir = input_path.parent / 'data'
+            output_dir = input_path.parent
             output_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             intermediate_output_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
             
             # Save batch processing results
-            batch_handler.write_results(processed_groups, intermediate_output_file)
+            batch_handler.write_results_excel(processed_groups, intermediate_output_file)
             logger.info(f"Batch processing results saved to: {intermediate_output_file}")
         except Exception as e:
             logger.warning(f"Failed to save intermediate batch results: {e}, continuing with analysis")

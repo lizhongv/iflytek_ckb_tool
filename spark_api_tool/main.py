@@ -24,18 +24,18 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Setup root logging - this must be done before importing other modules that use logging
-from conf.logging import setup_root_logging
-setup_root_logging(
-    log_dir="log",
-    console_level="INFO",
-    file_level="DEBUG",
-    root_level="DEBUG",
-    use_timestamp=False,
-    log_filename_prefix="spark_api_tool",
-    enable_dual_file_logging=True,
-    root_log_filename="root.log",
-    root_log_level="INFO"
-)
+# from conf.logging import setup_root_logging
+# setup_root_logging(
+#     log_dir="log",
+#     console_level="INFO",
+#     file_level="DEBUG",
+#     root_level="DEBUG",
+#     use_timestamp=False,
+#     log_filename_prefix="spark_api_tool",
+#     enable_dual_file_logging=True,
+#     root_log_filename="root.log",
+#     root_log_level="INFO"
+# )
 
 # Import local modules (relative imports work because current_dir is in sys.path)
 from ckb import CkbClient
@@ -267,37 +267,38 @@ async def main() -> dict:
         else:
             # Default output path
             input_path = Path(input_file)
-            output_dir = input_path.parent / 'data'
+            output_dir = input_path.parent 
             output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_file_with_timestamp = str(output_dir / f"{input_path.stem}_output_{timestamp}.xlsx")
-        
-        logger.info(f"[FILE_WRITE] Saving results to: {output_file_with_timestamp}")
+            # timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # output_file_with_timestamp = str(output_dir / f"{input_path.stem}_output_{timestamp}.xlsx")
+            output_file = str(output_dir / f"{input_path.stem}_output.xlsx")
+
+        logger.info(f"[FILE_WRITE] Saving results to: {output_file}")
         
         # Save results to Excel
         try:
-            handler.write_results_excel(processed_groups, output_file_with_timestamp)
+            handler.write_results_excel(processed_groups, output_file)
             logger.info(f"[FILE_WRITE] Excel file saved successfully")
         except PermissionError:
-            logger.error(f"[ERROR] File is locked by another program: {output_file_with_timestamp}")
-            return create_response(False, ErrorCode.FILE_LOCKED, output_file_with_timestamp)
+            logger.error(f"[ERROR] File is locked by another program: {output_file}")
+            return create_response(False, ErrorCode.FILE_LOCKED, output_file)
         except Exception as e:
             logger.error(f"[ERROR] Failed to save Excel results: {e}")
             return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
         
         # Save results to JSONL
         try:
-            handler.write_results_jsonl(processed_groups, output_file_with_timestamp)
+            handler.write_results_jsonl(processed_groups, output_file)
             logger.info(f"[FILE_WRITE] JSONL file saved successfully")
         except PermissionError:
-            logger.error(f"[ERROR] File is locked by another program (JSONL): {output_file_with_timestamp}.jsonl")
-            return create_response(False, ErrorCode.FILE_LOCKED, f"{output_file_with_timestamp}.jsonl")
+            logger.error(f"[ERROR] File is locked by another program (JSONL): {output_file}.jsonl")
+            return create_response(False, ErrorCode.FILE_LOCKED, f"{output_file}.jsonl")
         except Exception as e:
             logger.error(f"[ERROR] Failed to save JSONL results: {e}")
             return create_response(False, ErrorCode.FILE_WRITE_ERROR, f"JSONL: {str(e)}")
         
         code, message = get_success_response()
-        logger.info(f"[TASK_COMPLETE] task_id={task_id} code={code} message=\"{message}\" output_file=\"{output_file_with_timestamp}\"")
+        logger.info(f"[TASK_COMPLETE] task_id={task_id} code={code} message=\"{message}\" output_file=\"{output_file}\"")
         return create_response(True)
         
     except Exception as e:
