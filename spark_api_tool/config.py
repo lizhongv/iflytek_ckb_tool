@@ -82,6 +82,14 @@ class PromptConfig:
     prompt: str = ""
 
 
+@dataclass
+class LLMConfig:
+    """LLM API configuration"""
+    api_key: str = ""
+    model: str = "deepseek-chat"
+    base_url: str = "https://api.deepseek.com"
+
+
 class ConfigManager:
     """Unified configuration manager"""
     
@@ -191,6 +199,14 @@ class ConfigManager:
             
             self._prompt = PromptConfig(
                 prompt=prompt_data.get("prompt", "")
+            )
+            
+            # Load LLM configuration
+            llm_data = config.get("llm", {})
+            self.llm = LLMConfig(
+                api_key=llm_data.get("api_key", ""),
+                model=llm_data.get("model", "deepseek-chat"),
+                base_url=llm_data.get("base_url", "https://api.deepseek.com")
             )
             
         except Exception as e:

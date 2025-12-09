@@ -15,35 +15,42 @@ from pathlib import Path
 
 # Add current directory (spark_api_tool) to path for local imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+# if current_dir not in sys.path:
+#     sys.path.insert(0, current_dir)
 
 # Add project root to path for importing conf modules
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Setup root logging - this must be done before importing other modules that use logging
-# from conf.logging import setup_root_logging
-# setup_root_logging(
-#     log_dir="log",
-#     console_level="INFO",
-#     file_level="DEBUG",
-#     root_level="DEBUG",
-#     use_timestamp=False,
-#     log_filename_prefix="spark_api_tool",
-#     enable_dual_file_logging=True,
-#     root_log_filename="root.log",
-#     root_log_level="INFO"
-# )
+if __name__ == "__main__":
+    # Setup root logging - this must be done before importing other modules that use logging
+    from conf.logging import setup_root_logging
+    setup_root_logging(
+        log_dir="logs",
+        console_level="INFO",
+        file_level="DEBUG",
+        root_level="DEBUG",
+        use_timestamp=False,
+        log_filename_prefix="spark_api_tool",
+        enable_dual_file_logging=True,
+        root_log_filename_prefix="root",
+        root_log_level="INFO"
+    )
+    logger = logging.getLogger(__name__)
+else:
+    logger = logging.getLogger(__name__)
 
-# Import local modules (relative imports work because current_dir is in sys.path)
-from ckb import CkbClient
-from excel_io import ExcelHandler, ConversationGroup, ConversationTask
-from config import config_manager
+
+# Import local modules
+# Note: When run directly, Python adds spark_api_tool to sys.path[0], so absolute imports work
+# When imported as module, parent_dir is in sys.path, so we use spark_api_tool.xxx imports
+# We use spark_api_tool.xxx to ensure it works in both cases
+from spark_api_tool.ckb import CkbClient
+from spark_api_tool.excel_io import ExcelHandler, ConversationGroup, ConversationTask
+from spark_api_tool.config import config_manager
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
-logger = logging.getLogger(__name__)
 
 async def process_conversation_group(
     ckb_client: CkbClient,
@@ -211,9 +218,12 @@ async def process_batch(groups: List[ConversationGroup]) -> List[ConversationGro
     return groups
 
 
-async def main() -> dict:
+async def main(input_file: Optional[str] = None) -> dict:
     """
     Main function
+    
+    Args:
+        input_file: Path to input Excel file. If None, will try to read from config (backward compatibility)
     
     Returns:
         Response dictionary with code and message
@@ -227,11 +237,14 @@ async def main() -> dict:
         task_id_context.set(task_id)
         logger.info(f"[TASK_START] task_id={task_id}")
         
-        # Read input file
-        input_file = config_manager.mission.input_file
+        # Read input file - prioritize function parameter over config
         if not input_file:
-            logger.error("[ERROR] Input file not configured")
-            return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
+            # Backward compatibility: try to read from config
+            input_file = config_manager.mission.input_file
+            if not input_file:
+                logger.error("[ERROR] Input file not provided and not configured in batch_config.yaml")
+                logger.error("[ERROR] Please provide input_file parameter or configure it in batch_config.yaml")
+                return create_response(False, ErrorCode.CONFIG_INPUT_FILE_MISSING)
         
         logger.info(f"[FILE_READ] Reading input file: {input_file}")
         try:
@@ -307,7 +320,35 @@ async def main() -> dict:
 
 
 if __name__ == "__main__":
-    result = asyncio.run(main())
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Spark API Tool - Batch processing for CKB QA')
+    parser.add_argument(
+        'input_file',
+        type=str,
+        nargs='?',  # Make it optional
+        help='Path to input Excel file (required if not configured in batch_config.yaml)'
+    )
+    parser.add_argument(
+        '--input-file',
+        type=str,
+        dest='input_file_alt',
+        help='Alternative way to specify input file path'
+    )
+    
+    args = parser.parse_args()
+    
+    # Get input file from command line arguments
+    input_file = args.input_file or args.input_file_alt
+    
+    if not input_file:
+        # Try to read from config as fallback
+        input_file = config_manager.mission.input_file if hasattr(config_manager, 'mission') else None
+        if not input_file:
+            parser.error("Input file is required. Provide it as argument or configure in batch_config.yaml")
+    
+    result = asyncio.run(main(input_file=input_file))
     if result:
         print(f"Code: {result['code']}, Message: {result['message']}")
         if not result.get('success'):

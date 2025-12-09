@@ -24,8 +24,8 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from login import login_knowledge
-from config import config_manager
+from spark_api_tool.login import login_knowledge
+from spark_api_tool.config import config_manager
 from conf.error_codes import ErrorCode
 
 import logging

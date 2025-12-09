@@ -10,12 +10,16 @@ from pathlib import Path
 import sys
 import os
 
+
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
-from config import config_manager
+from spark_api_tool.config import config_manager
+
 import logging
-
 logger = logging.getLogger(__name__)
 
 

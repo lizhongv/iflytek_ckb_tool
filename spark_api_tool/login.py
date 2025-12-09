@@ -19,7 +19,7 @@ import aiohttp
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-
+from typing import Optional
 import sys
 import os
 
@@ -30,10 +30,9 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from conf.error_codes import ErrorCode
-from config import config_manager
-from typing import Optional
-import logging
+from spark_api_tool.config import config_manager
 
+import logging
 logger = logging.getLogger(__name__)
 
 
