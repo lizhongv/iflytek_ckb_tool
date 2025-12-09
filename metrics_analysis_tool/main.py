@@ -10,6 +10,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Optional
+import logging
 
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,19 +19,22 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Setup root logging
-from conf.logging import setup_root_logging
-setup_root_logging(
-    log_dir="log",
-    console_level="INFO",
-
-    root_level="DEBUG",
-    use_timestamp=False,
-    log_filename_prefix="metrics_analysis_tool"
-)
-
-import logging
-logger = logging.getLogger(__name__)
-
+if __name__ == "__main__":
+    from conf.logging import setup_root_logging
+    setup_root_logging(
+        log_dir="logs",
+        console_level="INFO",
+        file_level="DEBUG",
+        root_level="DEBUG",
+        use_timestamp=False,
+        log_filename_prefix="metrics_analysis_tool",
+        enable_dual_file_logging=True,
+        root_log_filename_prefix="root",
+        root_log_level="INFO"
+    )
+    logger = logging.getLogger(__name__)
+else:
+    logger = logging.getLogger(__name__)
 
 # Type name mapping: English to Chinese
 RETRIEVAL_TYPE_MAPPING = {
@@ -103,7 +107,7 @@ def analyze_norm_metrics(df: pd.DataFrame) -> Dict:
     """
     metrics = {}
     
-    # Check if norm analysis exists (use current column name from excel_handler.py)
+    # Check if norm analysis exists, directly return null metrics if not exists
     norm_col = '问题是否规范'
     if norm_col not in df.columns:
         return metrics
@@ -112,6 +116,7 @@ def analyze_norm_metrics(df: pd.DataFrame) -> Dict:
     valid_data = df[df[norm_col].notna() & (df[norm_col] != '')].copy()
     total_count = len(valid_data)
     
+    # If no valid data, return null metrics
     if total_count == 0:
         return metrics
     
@@ -120,6 +125,7 @@ def analyze_norm_metrics(df: pd.DataFrame) -> Dict:
     valid_data = valid_data[valid_data[norm_col].notna()]
     total_count = len(valid_data)
     
+    # If no valid data, return null metrics
     if total_count == 0:
         return metrics
     
@@ -137,10 +143,11 @@ def analyze_norm_metrics(df: pd.DataFrame) -> Dict:
     metrics['非规范性数量'] = non_normative_count
     metrics['非规范性比例'] = (non_normative_count / total_count) if total_count > 0 else 0.0
     
-    # Count by problem type (for non-normative questions)
+    # Count by problem type (for all questions, including normative and non-normative)
     problem_type_col = '问题（非）规范性类型'
     if problem_type_col in df.columns:
-        problem_types = non_normative_data[problem_type_col].value_counts().to_dict()
+        # Use all valid data, not just non-normative data
+        problem_types = valid_data[problem_type_col].value_counts().to_dict()
         metrics['问题类型分布'] = {}
         for ptype, count in problem_types.items():
             if ptype and str(ptype).strip():
@@ -198,15 +205,18 @@ def analyze_set_metrics(df: pd.DataFrame) -> Dict:
     metrics['集外数量'] = out_set_count
     metrics['集外比例'] = (out_set_count / total_count) if total_count > 0 else 0.0
     
-    # Count by in/out set type
+    # Count by problem type (for all questions, including in-set and out-set)
     set_type_col = '问题（非）在集类型'
     if set_type_col in df.columns:
-        in_set_types = in_set_data[set_type_col].value_counts().to_dict()
-        out_set_types = out_set_data[set_type_col].value_counts().to_dict()
-        metrics['集内类型分布'] = {k: {'数量': int(v), '比例': (v / in_set_count) if in_set_count > 0 else 0.0} 
-                                   for k, v in in_set_types.items() if k and str(k).strip()}
-        metrics['集外类型分布'] = {k: {'数量': int(v), '比例': (v / out_set_count) if out_set_count > 0 else 0.0} 
-                                    for k, v in out_set_types.items() if k and str(k).strip()}
+        # Use all valid data, not separated by in-set/out-set
+        problem_types = valid_data[set_type_col].value_counts().to_dict()
+        metrics['问题类型分布'] = {}
+        for ptype, count in problem_types.items():
+            if ptype and str(ptype).strip():
+                metrics['问题类型分布'][ptype] = {
+                    '数量': int(count),
+                    '比例': (count / total_count) if total_count > 0 else 0.0
+                }
     
     return metrics
 
@@ -464,6 +474,47 @@ def print_metrics_report(metrics: Dict):
     print(json_output)
 
 
+def save_metrics_to_json(metrics: Dict, input_file_path: str) -> str:
+    """
+    Save metrics to JSON file
+    
+    Args:
+        metrics: Dictionary containing all metrics
+        input_file_path: Path to input Excel file
+        
+    Returns:
+        Path to saved JSON file
+    """
+    input_path = Path(input_file_path)
+    # Get task_id from context
+    try:
+        from conf.logging import task_id_context
+        task_id = task_id_context.get('')
+        if task_id:
+            output_path = input_path.parent / f"{input_path.stem}_metrics_{task_id}.json"
+        else:
+            output_path = input_path.parent / f"{input_path.stem}_metrics.json"
+    except Exception:
+        output_path = input_path.parent / f"{input_path.stem}_metrics.json"
+    
+    try:
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write JSON file with indentation for readability
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"[FILE_WRITE] Metrics saved to JSON file: {output_path}")
+        return str(output_path)
+    except PermissionError:
+        logger.error(f"[ERROR] File is locked by another program, cannot write JSON: {output_path}")
+        raise
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to save metrics to JSON: {e}")
+        raise
+
+
 def analyze_metrics(file_path: str, 
                     norm_analysis: bool = False,
                     set_analysis: bool = False,
@@ -484,60 +535,72 @@ def analyze_metrics(file_path: str,
     """
     try:
         # Read Excel file
+        logger.info(f"[FILE_READ] Reading Excel file: {file_path}")
         df = pd.read_excel(file_path, sheet_name='Sheet1')
-        logger.info(f"Successfully read Excel file: {file_path}")
-        logger.info(f"Total rows: {len(df)}, Total columns: {len(df.columns)}")
+        logger.info(f"[FILE_READ] Successfully read Excel file: {file_path}")
+        logger.info(f"[FILE_READ] Total rows: {len(df)}, Total columns: {len(df.columns)}")
         
         # Analyze different metrics based on enabled flags
         metrics = {}
         
         # 1. Normativity (problem-side) analysis
         if norm_analysis:
+            logger.info("[METRICS_ANALYSIS] Executing normativity metrics analysis...")
             norm_metrics = analyze_norm_metrics(df)
             if norm_metrics:
                 metrics['规范性指标'] = norm_metrics
+                logger.info("[METRICS_ANALYSIS] Normativity metrics analysis completed")
         else:
-            logger.info("Normativity analysis is disabled, skipping...")
+            logger.info("[METRICS_ANALYSIS] Normativity analysis is disabled, skipping...")
         
         # 2. Set (in/out set) analysis
         if set_analysis:
+            logger.info("[METRICS_ANALYSIS] Executing set (in/out set) metrics analysis...")
             set_metrics = analyze_set_metrics(df)
             if set_metrics:
                 metrics['集内集外指标'] = set_metrics
+                logger.info("[METRICS_ANALYSIS] Set metrics analysis completed")
         else:
-            logger.info("Set analysis is disabled, skipping...")
+            logger.info("[METRICS_ANALYSIS] Set analysis is disabled, skipping...")
         
         # 3. Recall (retrieval) analysis
         if recall_analysis:
+            logger.info("[METRICS_ANALYSIS] Executing recall (retrieval) metrics analysis...")
             recall_metrics = analyze_recall_metrics(df)
             if recall_metrics:
                 metrics['召回指标'] = recall_metrics
+                logger.info("[METRICS_ANALYSIS] Recall metrics analysis completed")
         else:
-            logger.info("Recall analysis is disabled, skipping...")
+            logger.info("[METRICS_ANALYSIS] Recall analysis is disabled, skipping...")
         
         # 4. Response analysis
         if reply_analysis:
+            logger.info("[METRICS_ANALYSIS] Executing response metrics analysis...")
             response_metrics = analyze_response_metrics(df)
             if response_metrics:
                 metrics['回复指标'] = response_metrics
+                logger.info("[METRICS_ANALYSIS] Response metrics analysis completed")
         else:
-            logger.info("Response analysis is disabled, skipping...")
+            logger.info("[METRICS_ANALYSIS] Response analysis is disabled, skipping...")
         
         # 5. Combined recall and response analysis (only if both are enabled)
         if recall_analysis and reply_analysis:
+            logger.info("[METRICS_ANALYSIS] Executing combined recall and response metrics analysis...")
             combined_metrics = analyze_combined_metrics(df)
             if combined_metrics:
                 metrics['联合指标'] = combined_metrics
+                logger.info("[METRICS_ANALYSIS] Combined metrics analysis completed")
         else:
-            logger.info("Combined analysis requires both recall_analysis and reply_analysis to be enabled, skipping...")
+            logger.info("[METRICS_ANALYSIS] Combined analysis requires both recall_analysis and reply_analysis to be enabled, skipping...")
         
+        logger.info(f"[METRICS_ANALYSIS] All metrics analysis completed, total metrics sections: {len(metrics)}")
         return metrics
         
     except FileNotFoundError:
-        logger.error(f"File not found: {file_path}")
+        logger.error(f"[ERROR] File not found: {file_path}")
         raise
     except Exception as e:
-        logger.error(f"Failed to analyze metrics: {e}", exc_info=True)
+        logger.error(f"[ERROR] Failed to analyze metrics: {e}", exc_info=True)
         raise
 
 
@@ -553,13 +616,13 @@ def main():
         epilog="""
 Examples:
   # Analyze all metrics
-  python main.py --norm-analysis --set-analysis --recall-analysis --reply-analysis file.xlsx
+  python main.py --norm-analysis --set-analysis --recall-analysis --reply-analysis data\test_examples_output_analysis_result.xlsx
   
   # Analyze only norm and set metrics
-  python main.py --norm-analysis --set-analysis file.xlsx
+  python main.py --norm-analysis --set-analysis data\test_examples_output_analysis_result.xlsx
   
   # Analyze only recall metrics
-  python main.py --recall-analysis file.xlsx
+  python main.py --recall-analysis data\test_examples_output_analysis_result.xlsx
         """
     )
     
@@ -580,52 +643,70 @@ Examples:
                        help='Enable all analyses (default if no specific flags are set)')
     
     args = parser.parse_args()
-    
-    file_path = args.file_path
-    
-    if not file_path:
-        logger.error("File path is required")
-        print("Error: File path is required")
-        parser.print_help()
-        return
-    
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        print(f"Error: File not found: {file_path}")
-        return
-    
-    # Determine which analyses to enable
-    # If --all is set or no specific flags are set, enable all
-    enable_all = args.all or not any([
-        args.norm_analysis, args.set_analysis, 
-        args.recall_analysis, args.reply_analysis
-    ])
-    
-    norm_analysis = enable_all or args.norm_analysis
-    set_analysis = enable_all or args.set_analysis
-    recall_analysis = enable_all or args.recall_analysis
-    reply_analysis = enable_all or args.reply_analysis
-    
-    # Log enabled analyses
-    enabled_analyses = []
-    if norm_analysis:
-        enabled_analyses.append("norm_analysis")
-    if set_analysis:
-        enabled_analyses.append("set_analysis")
-    if recall_analysis:
-        enabled_analyses.append("recall_analysis")
-    if reply_analysis:
-        enabled_analyses.append("reply_analysis")
-    
-    logger.info(f"Enabled analyses: {enabled_analyses if enabled_analyses else 'none'}")
-    
-    if not enabled_analyses:
-        logger.warning("No analyses enabled, no metrics will be calculated")
-        print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
-        return
-    
+
+    # TODO ? demo testing
+    args.file_path = r"data\test_examples_output_491cf155-3a65-44_analysis_result_491cf155-3a65-44.xlsx"
+    args.norm_analysis = True
+    args.set_analysis = True 
+    args.recall_analysis = True
+    args.reply_analysis = True
+    # args.all = True
+
     try:
+        # Generate task_id for this metrics analysis run and set it in logging context
+        # This should be done at the very beginning so all logs include task_id
+        from conf.logging import task_id_context
+        import uuid
+        # task_id = str(uuid.uuid4())[:16]
+        task_id = "491cf155-3a65-44"
+        task_id_context.set(task_id)
+        logger.info(f"[TASK_START] task_id={task_id}")
+        
+        file_path = args.file_path
+        
+        if not file_path:
+            logger.error("[ERROR] File path is required")
+            print("Error: File path is required")
+            parser.print_help()
+            return
+        
+        if not os.path.exists(file_path):
+            logger.error(f"[ERROR] File not found: {file_path}")
+            print(f"Error: File not found: {file_path}")
+            return
+        
+        # Determine which analyses to enable
+        # If --all is set or no specific flags are set, enable all
+        enable_all = args.all or not any([
+            args.norm_analysis, args.set_analysis, 
+            args.recall_analysis, args.reply_analysis
+        ])
+        
+        norm_analysis = enable_all or args.norm_analysis
+        set_analysis = enable_all or args.set_analysis
+        recall_analysis = enable_all or args.recall_analysis
+        reply_analysis = enable_all or args.reply_analysis
+        
+        # Log enabled analyses
+        enabled_analyses = []
+        if norm_analysis:
+            enabled_analyses.append("norm_analysis")
+        if set_analysis:
+            enabled_analyses.append("set_analysis")
+        if recall_analysis:
+            enabled_analyses.append("recall_analysis")
+        if reply_analysis:
+            enabled_analyses.append("reply_analysis")
+        
+        logger.info(f"[ANALYSIS_CONFIG] Enabled analyses: {enabled_analyses if enabled_analyses else 'none'}")
+        
+        if not enabled_analyses:
+            logger.warning("[WARNING] No analyses enabled, no metrics will be calculated")
+            print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
+            return
+        
         # Analyze metrics
+        logger.info(f"[ANALYSIS_START] Starting metrics analysis for file: {file_path}")
         metrics = analyze_metrics(
             file_path,
             norm_analysis=norm_analysis,
@@ -635,13 +716,34 @@ Examples:
         )
         
         # Print report
+        logger.info("[METRICS_REPORT] Printing metrics report...")
         print_metrics_report(metrics)
         
-        logger.info("Metrics analysis completed successfully")
+        # Save metrics to JSON file
+        logger.info("[SAVE_RESULTS] Saving metrics to JSON file...")
+        json_output_path = save_metrics_to_json(metrics, file_path)
+        logger.info(f"[FILE_WRITE] Metrics JSON file saved successfully: {json_output_path}")
         
+        # Generate and save comprehensive analysis report
+        try:
+            from report_generator import ReportGenerator
+            logger.info("[REPORT_GENERATION] Generating comprehensive data quality analysis report...")
+            report_generator = ReportGenerator(metrics)
+            report_content = report_generator.generate_report()
+            report_path = report_generator.save_report(report_content, file_path)
+            logger.info(f"[FILE_WRITE] Comprehensive report saved successfully: {report_path}")
+        except ImportError as e:
+            logger.warning(f"[WARNING] Failed to import report generator: {e}, skipping report generation")
+        except Exception as e:
+            logger.warning(f"[WARNING] Failed to generate report: {e}, continuing without report")
+        
+        logger.info(f"[TASK_COMPLETE] task_id={task_id} Metrics analysis completed successfully")
+        
+    except FileNotFoundError as e:
+        logger.error(f"[ERROR] File not found: {e}")
+        raise
     except Exception as e:
-        logger.error(f"Metrics analysis failed: {e}", exc_info=True)
-        print(f"Error: Metrics analysis failed: {e}")
+        logger.error(f"[ERROR] Metrics analysis failed: {e}", exc_info=True)
         raise
 
 

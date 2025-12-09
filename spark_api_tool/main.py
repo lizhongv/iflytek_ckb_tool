@@ -268,27 +268,23 @@ async def main(input_file: Optional[str] = None) -> dict:
             logger.error(f"[ERROR] Batch processing failed: {e}", exc_info=True)
             return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
         
-        # Generate output file path with timestamp
-        output_file = config_manager.mission.output_file
-        if output_file:
-            output_dir = os.path.dirname(output_file) if os.path.dirname(output_file) else 'data'
-            base_name = os.path.basename(output_file)
-            name, ext = os.path.splitext(base_name)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_file_with_timestamp = os.path.join(output_dir, f"{name}_{timestamp}{ext}")
-            os.makedirs(output_dir, exist_ok=True)
-        else:
-            # Default output path
-            input_path = Path(input_file)
-            output_dir = input_path.parent 
-            output_dir.mkdir(parents=True, exist_ok=True)
-            # timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            # output_file_with_timestamp = str(output_dir / f"{input_path.stem}_output_{timestamp}.xlsx")
-            output_file = str(output_dir / f"{input_path.stem}_output.xlsx")
+        # Generate output file path with task_id (directly in code, not from config)
+        input_path = Path(input_file)
+        output_dir = input_path.parent 
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Use task_id in filename
+        output_file = str(output_dir / f"{input_path.stem}_output_{task_id}.xlsx")
 
-        logger.info(f"[FILE_WRITE] Saving results to: {output_file}")
+        #  output_dir = os.path.dirname(output_file) if os.path.dirname(output_file) else 'data'
+        #  base_name = os.path.basename(output_file)
+        #  name, ext = os.path.splitext(base_name)
+        # Use task_id in filename
+        # output_file = os.path.join(output_dir, f"{name}_{task_id}{ext}")
+
+        
         
         # Save results to Excel
+        logger.info(f"[FILE_WRITE] Saving results to: {output_file}")
         try:
             handler.write_results_excel(processed_groups, output_file)
             logger.info(f"[FILE_WRITE] Excel file saved successfully")

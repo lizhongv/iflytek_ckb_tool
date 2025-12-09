@@ -58,11 +58,21 @@ effect:
   #   - "58655d6e4a71cbc7d834453fa210f20a"
 
 # ===========================================
+# LLM配置部分（用于标注等任务）
+# ===========================================
+llm:
+  # LLM API配置
+  api_key: "sk-f6c4a6e849e44078887bdae7c47c53bd"      # LLM API密钥
+  model: "deepseek-chat"                               # 模型名称
+  base_url: "https://api.deepseek.com"                 # API基础URL
+
+# ===========================================
 # 任务配置部分
 # ===========================================
 mission:
   # 数据集文件配置
-  input_file: "data/test_examples.xlsx"                # 输入数据文件路径（Excel格式）
+  # 注意: input_file 已改为从代码中传入，不再从配置文件读取
+  input_file: "data/test_examples.xlsx"                # 已废弃：输入文件路径现在通过命令行参数或函数参数传入
 
   # 知识检索配置
   knowledge_num: 8                  # 检索知识条数，范围1-50，用于问答时从知识库中检索相关文档

@@ -51,7 +51,7 @@ def setup_root_logging(
     use_timestamp: bool = False,
     log_filename_prefix: str = "app",
     enable_dual_file_logging: bool = False,
-    root_log_filename: str = "root.log",
+    root_log_filename_prefix: str = "root",
     root_log_level: str = "INFO"
 ) -> None:
     """
@@ -82,7 +82,7 @@ def setup_root_logging(
         root_log_path = os.path.join(log_dir, f"root_{timestamp}.log") if enable_dual_file_logging else None
     else:
         log_filename = os.path.join(log_dir, f"{log_filename_prefix}.log")
-        root_log_path = os.path.join(log_dir, root_log_filename) if enable_dual_file_logging else None
+        root_log_path = os.path.join(log_dir, f"{root_log_filename_prefix}.log") if enable_dual_file_logging else None
     
     # Custom filter to add task_id to log records
     class TaskIdFilter(logging.Filter):

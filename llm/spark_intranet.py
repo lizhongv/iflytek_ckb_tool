@@ -1,6 +1,8 @@
+# -*- coding: utf-8 -*-
+
 """
-星火内网API调用
-支持延迟重试机制
+Spark intranet API client
+Provides interface for calling Spark LLM API on intranet with retry mechanism
 """
 import requests
 import json
@@ -23,27 +25,31 @@ def spark_chat(
     retry_delay: float = 1.0,
 ) -> str:
     """
-    调用星火内网API
+    Call Spark intranet API
     
-    参数:
-        messages: 消息列表，格式为 [{"role": "user", "content": "..."}]
-        url: API地址，默认为内网地址
-        model: 模型名称，默认为 "spark-x1"
-        api_key: API密钥，如果为None则使用默认值
-        stream: 是否流式输出，默认False
-        max_tokens: 最大token数，默认1024
-        timeout: 超时时间（秒），默认60秒
-        max_retries: 最大重试次数，默认3次
-        retry_delay: 重试延迟（秒），默认1秒，每次重试延迟递增
+    Args:
+        messages: List of message dictionaries with 'role' and 'content' keys
+        url: API endpoint URL, defaults to intranet address
+        model: Model name, defaults to "spark-x1"
+        api_key: API key, if None uses default value
+        stream: Whether to use streaming response, defaults to False
+        max_tokens: Maximum number of tokens, defaults to 1024
+        timeout: Request timeout in seconds, defaults to 60
+        max_retries: Maximum number of retry attempts, defaults to 3
+        retry_delay: Delay between retries in seconds (incremental), defaults to 1.0
     
-    返回:
-        模型生成的文本内容
+    Returns:
+        Generated text content from the model
+    
+    Raises:
+        ValueError: If messages is empty
+        Exception: If API call fails after all retries
     """
     if not api_key:
-        api_key = "fc3b63ad52db4981a7f35d191adde082"  # 默认API密钥
+        api_key = "fc3b63ad52db4981a7f35d191adde082"  # Default API key
     
     if not messages:
-        raise ValueError("messages 不能为空")
+        raise ValueError("messages cannot be empty")
     
     payload = {
         "model": model,
@@ -68,69 +74,69 @@ def spark_chat(
                 timeout=timeout
             )
             
-            logger.debug(f"API响应状态码: {response.status_code}")
+            logger.debug(f"API response status code: {response.status_code}")
             
             if response.status_code != 200:
                 error_text = response.text
-                logger.error(f"API错误响应: {error_text}")
+                logger.error(f"API error response: {error_text}")
                 response.raise_for_status()
             
             result = response.json()
             
-            # 检查响应格式
+            # Check response format
             if 'choices' not in result or not result['choices']:
-                raise ValueError(f"响应格式错误: {result}")
+                raise ValueError(f"Invalid response format: {result}")
             
             content = result['choices'][0]['message']['content']
             return content.strip() if content else ""
             
         except requests.exceptions.Timeout as e:
-            last_error = f"请求超时: {str(e)}"
-            logger.warning(f"第 {attempt + 1} 次尝试超时: {last_error}")
+            last_error = f"Request timeout: {str(e)}"
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} timeout: {last_error}")
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (attempt + 1)
-                logger.info(f"等待 {wait_time} 秒后重试...")
+                logger.info(f"Waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
             else:
-                raise Exception(f"API调用失败，已重试{max_retries}次: {last_error}")
+                raise Exception(f"API call failed after {max_retries} retries: {last_error}")
                 
         except requests.exceptions.ConnectionError as e:
-            last_error = f"连接错误: {str(e)}"
-            logger.warning(f"第 {attempt + 1} 次尝试连接失败: {last_error}")
+            last_error = f"Connection error: {str(e)}"
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} connection failed: {last_error}")
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (attempt + 1)
-                logger.info(f"等待 {wait_time} 秒后重试...")
+                logger.info(f"Waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
             else:
-                raise Exception(f"API调用失败，已重试{max_retries}次: {last_error}")
+                raise Exception(f"API call failed after {max_retries} retries: {last_error}")
                 
         except requests.exceptions.HTTPError as e:
-            # HTTP错误（如401, 403, 500等）通常不应该重试
-            error_msg = f"HTTP错误 ({response.status_code}): {response.text[:200]}"
+            # HTTP errors (401, 403, 500, etc.) usually should not retry
+            error_msg = f"HTTP error ({response.status_code}): {response.text[:200]}"
             logger.error(error_msg)
             raise Exception(error_msg)
             
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            # 响应格式错误，不应该重试
-            error_msg = f"响应格式错误: {str(e)}"
+            # Response format errors should not retry
+            error_msg = f"Invalid response format: {str(e)}"
             logger.error(error_msg)
             raise Exception(error_msg)
             
         except Exception as e:
-            last_error = f"未知错误: {str(e)}"
-            logger.warning(f"第 {attempt + 1} 次尝试失败: {last_error}")
+            last_error = f"Unknown error: {str(e)}"
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {last_error}")
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (attempt + 1)
-                logger.info(f"等待 {wait_time} 秒后重试...")
+                logger.info(f"Waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
             else:
-                raise Exception(f"API调用失败，已重试{max_retries}次: {last_error}")
+                raise Exception(f"API call failed after {max_retries} retries: {last_error}")
     
-    raise Exception(f"API调用失败: {str(last_error)}")
+    raise Exception(f"API call failed: {str(last_error)}")
 
 
 if __name__ == "__main__":
-    # 数据标注示例：判断模型回复是否正确
+    # Example: Data labeling task - evaluate model response correctness
     prompt = """假如你是一个数据标注工程师，需要根据"用户问题"和"参考答案"来评估"模型回复"的质量。
 
 ## 任务要求
@@ -193,17 +199,16 @@ if __name__ == "__main__":
         max_tokens=4096
     )
     print("=" * 60)
-    print("标注结果：")
+    print("Labeling result:")
     print(result)
     print("=" * 60)
     
-    # 尝试解析JSON验证格式
+    # Try to parse JSON to validate format
     try:
-        import json
         parsed = json.loads(result)
-        print("\nJSON解析成功：")
+        print("\nJSON parsing successful:")
         print(f"  label: {parsed.get('label')}")
         print(f"  explanation: {parsed.get('explanation')}")
     except json.JSONDecodeError as e:
-        print(f"\nJSON解析失败: {e}")
-        print("请检查输出格式是否符合要求")
+        print(f"\nJSON parsing failed: {e}")
+        print("Please check if output format meets requirements")

@@ -17,7 +17,6 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import logging
-
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +59,6 @@ class MissionConfig:
     check_source_by_rule: bool = False
     thread_num: int = 1
     input_file: str = ""
-    output_file: str = ""
     knowledge_num: int = 10
     auth_refresh_interval: int = 10  # Refresh auth every N records (0 to disable)
     auth_refresh_time_minutes: int = 30  # Refresh auth every N minutes (0 to disable)
@@ -175,7 +173,6 @@ class ConfigManager:
                 check_source_by_rule=mission_data.get("check_source_by_rule", False),  # Not used but kept for backward compatibility
                 thread_num=mission_data.get("thread_num", 1),
                 input_file=mission_data.get("input_file", ""),
-                output_file=mission_data.get("output_file", ""),
                 knowledge_num=mission_data.get("knowledge_num", 10),
                 auth_refresh_interval=mission_data.get("auth_refresh_interval", 10),
                 auth_refresh_time_minutes=mission_data.get("auth_refresh_time_minutes", 30)  # Not used but kept for backward compatibility

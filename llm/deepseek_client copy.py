@@ -33,14 +33,25 @@ async def do_task(task_set, prompt):
         # 构造提示词并调用 deepseek
         final_prompt = build_prompt(question, answer, llm_response, prompt)
         try:
+            # 从config_manager读取配置，如果不可用则使用默认值（向后兼容）
+            if config_manager and hasattr(config_manager, 'llm'):
+                model = config_manager.llm.model
+                base_url = config_manager.llm.base_url
+                api_key = config_manager.llm.api_key
+            else:
+                # 向后兼容：如果config_manager不可用，使用默认值
+                model = "deepseek-chat"
+                base_url = "https://api.deepseek.com"
+                api_key = None  # 让deepseek_chat从环境变量读取
+            
             response = deepseek_chat(
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant"},
                     {"role": "user", "content": final_prompt},
                 ],
-                model="deepseek-chat",
-                base_url="https://api.deepseek.com",
-                api_key="sk-f6c4a6e849e44078887bdae7c47c53bd",
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
                 stream=False
             )
         except ValueError as e:
