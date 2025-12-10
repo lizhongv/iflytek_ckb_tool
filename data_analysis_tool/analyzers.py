@@ -8,11 +8,9 @@ import sys
 import os
 from pathlib import Path
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 # Environment variables should be loaded in main.py before importing this module
 # No need to load again here to avoid duplicate loading and log messages
 

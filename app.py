@@ -14,10 +14,9 @@ from datetime import datetime
 from enum import Enum
 import threading
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 # Setup root logging first - this must be done before importing other modules
 from conf.logging import setup_root_logging
@@ -50,7 +49,7 @@ from typing import Optional as Opt
 
 # Import batch processing and data analysis modules
 from spark_api_tool.main import process_batch
-from spark_api_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
+from spark_api_tool.excel_handler import ExcelHandler as BatchExcelHandler, ConversationGroup
 from spark_api_tool.config import config_manager
 
 # Import data analysis modules
@@ -65,7 +64,7 @@ from metrics_analysis_tool.main import analyze_metrics, print_metrics_report
 from conf.error_codes import ErrorCode, create_response, get_success_response, get_error_response
 
 # Import log parser for progress tracking
-from log_parser2 import get_latest_progress
+from utils.log_parser import get_latest_progress
 
 
 # ============================================================================
@@ -175,97 +174,97 @@ class TaskState:
         Note: This method should be called while holding self.lock.
         It doesn't acquire the lock itself to avoid deadlock when called from to_dict().
         """
-        # Weights: batch=30%, norm=10%, set=10%, recall=20%, reply=20%, metrics=10%
+        from conf.constants import ProgressWeights
         total = 0.0
         
-        # Batch processing: 30%
+        # Batch processing
         if self.batch_status == TaskStatus.COMPLETED:
-            total += 30.0
+            total += ProgressWeights.BATCH
         elif self.batch_status == TaskStatus.IN_PROGRESS:
-            total += 30.0 * (self.batch_progress / 100.0)
+            total += ProgressWeights.BATCH * (self.batch_progress / 100.0)
         elif self.batch_status == TaskStatus.SKIPPED:
-            total += 30.0  # Skipped tasks are treated as completed
+            total += ProgressWeights.BATCH  # Skipped tasks are treated as completed
         elif self.batch_status == TaskStatus.CANCELLED:
-            total += 30.0 * (self.batch_progress / 100.0)  # Partial progress
+            total += ProgressWeights.BATCH * (self.batch_progress / 100.0)  # Partial progress
         elif self.batch_status == TaskStatus.NOT_STARTED:
             # If later tasks are running, assume batch is done
             if (self.norm_status != TaskStatus.NOT_STARTED or 
                 self.set_status != TaskStatus.NOT_STARTED or
                 self.recall_status != TaskStatus.NOT_STARTED or
                 self.reply_status != TaskStatus.NOT_STARTED):
-                total += 30.0
+                total += ProgressWeights.BATCH
         
-        # Norm analysis: 10%
+        # Norm analysis
         if self.norm_status == TaskStatus.COMPLETED:
-            total += 10.0
+            total += ProgressWeights.NORM
         elif self.norm_status == TaskStatus.IN_PROGRESS:
-            total += 10.0 * (self.norm_progress / 100.0)
+            total += ProgressWeights.NORM * (self.norm_progress / 100.0)
         elif self.norm_status == TaskStatus.SKIPPED:
-            total += 10.0
+            total += ProgressWeights.NORM
         elif self.norm_status == TaskStatus.CANCELLED:
-            total += 10.0 * (self.norm_progress / 100.0)
+            total += ProgressWeights.NORM * (self.norm_progress / 100.0)
         elif self.norm_status == TaskStatus.NOT_STARTED:
             # If later tasks are running, assume norm is done
             if (self.set_status != TaskStatus.NOT_STARTED or
                 self.recall_status != TaskStatus.NOT_STARTED or
                 self.reply_status != TaskStatus.NOT_STARTED or
                 self.metrics_status != TaskStatus.NOT_STARTED):
-                total += 10.0
+                total += ProgressWeights.NORM
         
-        # Set analysis: 10%
+        # Set analysis
         if self.set_status == TaskStatus.COMPLETED:
-            total += 10.0
+            total += ProgressWeights.SET
         elif self.set_status == TaskStatus.IN_PROGRESS:
-            total += 10.0 * (self.set_progress / 100.0)
+            total += ProgressWeights.SET * (self.set_progress / 100.0)
         elif self.set_status == TaskStatus.SKIPPED:
-            total += 10.0
+            total += ProgressWeights.SET
         elif self.set_status == TaskStatus.CANCELLED:
-            total += 10.0 * (self.set_progress / 100.0)
+            total += ProgressWeights.SET * (self.set_progress / 100.0)
         elif self.set_status == TaskStatus.NOT_STARTED:
             # If later tasks are running, assume set is done
             if (self.recall_status != TaskStatus.NOT_STARTED or
                 self.reply_status != TaskStatus.NOT_STARTED or
                 self.metrics_status != TaskStatus.NOT_STARTED):
-                total += 10.0
+                total += ProgressWeights.SET
         
-        # Recall analysis: 20%
+        # Recall analysis
         if self.recall_status == TaskStatus.COMPLETED:
-            total += 20.0
+            total += ProgressWeights.RECALL
         elif self.recall_status == TaskStatus.IN_PROGRESS:
-            total += 20.0 * (self.recall_progress / 100.0)
+            total += ProgressWeights.RECALL * (self.recall_progress / 100.0)
         elif self.recall_status == TaskStatus.SKIPPED:
-            total += 20.0
+            total += ProgressWeights.RECALL
         elif self.recall_status == TaskStatus.CANCELLED:
-            total += 20.0 * (self.recall_progress / 100.0)
+            total += ProgressWeights.RECALL * (self.recall_progress / 100.0)
         elif self.recall_status == TaskStatus.NOT_STARTED:
             # If later tasks are running, assume recall is done
             if (self.reply_status != TaskStatus.NOT_STARTED or
                 self.metrics_status != TaskStatus.NOT_STARTED):
-                total += 20.0
+                total += ProgressWeights.RECALL
         
-        # Reply analysis: 20%
+        # Reply analysis
         if self.reply_status == TaskStatus.COMPLETED:
-            total += 20.0
+            total += ProgressWeights.REPLY
         elif self.reply_status == TaskStatus.IN_PROGRESS:
-            total += 20.0 * (self.reply_progress / 100.0)
+            total += ProgressWeights.REPLY * (self.reply_progress / 100.0)
         elif self.reply_status == TaskStatus.SKIPPED:
-            total += 20.0
+            total += ProgressWeights.REPLY
         elif self.reply_status == TaskStatus.CANCELLED:
-            total += 20.0 * (self.reply_progress / 100.0)
+            total += ProgressWeights.REPLY * (self.reply_progress / 100.0)
         elif self.reply_status == TaskStatus.NOT_STARTED:
             # If later tasks are running, assume reply is done
             if self.metrics_status != TaskStatus.NOT_STARTED:
-                total += 20.0
+                total += ProgressWeights.REPLY
         
-        # Metrics analysis: 10%
+        # Metrics analysis
         if self.metrics_status == TaskStatus.COMPLETED:
-            total += 10.0
+            total += ProgressWeights.METRICS
         elif self.metrics_status == TaskStatus.IN_PROGRESS:
-            total += 10.0 * (self.metrics_progress / 100.0)
+            total += ProgressWeights.METRICS * (self.metrics_progress / 100.0)
         elif self.metrics_status == TaskStatus.SKIPPED:
-            total += 10.0
+            total += ProgressWeights.METRICS
         elif self.metrics_status == TaskStatus.CANCELLED:
-            total += 10.0 * (self.metrics_progress / 100.0)
+            total += ProgressWeights.METRICS * (self.metrics_progress / 100.0)
         
         return min(100.0, total)
     
@@ -542,6 +541,7 @@ async def update_progress_from_log(task_state: TaskState, task_id: str):
     """
     try:
         import asyncio
+        from conf.constants import Timeouts
         
         # Use logging configuration from config file
         # All logs from spark_api_tool and data_analysis_tool are written to the same log file
@@ -627,7 +627,7 @@ async def update_progress_from_log(task_state: TaskState, task_id: str):
                     get_reply_progress(),
                     return_exceptions=True
                 ),
-                timeout=1.0  # 1 second total timeout for all reads
+                timeout=Timeouts.LOG_READ  # Total timeout for all reads
             )
             
             # Collect all updates first, then update in a single call to minimize lock contention
@@ -699,11 +699,9 @@ async def execute_workflow(
         if not file_path or not os.path.exists(file_path):
             raise ValueError(f"Input file not found: {file_path}")
         
-        # Get project root directory and set output directory to data/ under project root
-        # app.py is in project root, so parent of current_dir is project root
-        project_root = Path(current_dir).absolute()
-        output_dir = project_root / 'data'
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Get output directory using unified utility
+        from conf.path_utils import get_data_dir, ensure_dir_exists
+        output_dir = ensure_dir_exists(get_data_dir())
         
         # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
         if norm_analysis or set_analysis:
@@ -744,10 +742,10 @@ async def execute_workflow(
         await update_progress_from_log(task_state, task_state.task_id)
         
         # Save intermediate batch results
+        from conf.constants import FilePrefixes, FileExtensions
         input_path = Path(file_path)
-        # Use task_id in filename instead of timestamp
-        # output_dir is already set to project root / data at the beginning of the function
-        intermediate_file = str(output_dir / f"{input_path.stem}_batch_result_{task_state.task_id}.xlsx")
+        # Use task_id in filename
+        intermediate_file = str(output_dir / f"{input_path.stem}_{FilePrefixes.BATCH_RESULT}_{task_state.task_id}{FileExtensions.EXCEL}")
         
         try:
             batch_handler.write_results(processed_groups, intermediate_file)
@@ -861,8 +859,9 @@ async def execute_workflow(
             logger.info(f"[FILE_WRITE] Saving integrated results to Excel...")
             excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
             
-            # Use task_id in filename instead of timestamp
-            output_file = str(output_dir / f"{input_path.stem}_integrated_result_{task_state.task_id}.xlsx")
+            # Use task_id in filename
+            from conf.constants import FilePrefixes, FileExtensions
+            output_file = str(output_dir / f"{input_path.stem}_{FilePrefixes.INTEGRATED_RESULT}_{task_state.task_id}{FileExtensions.EXCEL}")
             
             import pandas as pd
             df = pd.DataFrame(excel_data)
@@ -922,8 +921,8 @@ async def execute_workflow(
                 
                 if metrics:
                     # Save metrics JSON file (metrics_analysis_tool will also save it, but we save here for API access)
-                    # Use task_id in filename
-                    metrics_json_file = str(output_dir / f"{input_path.stem}_metrics_{task_state.task_id}.json")
+                    from conf.constants import FilePrefixes, FileExtensions
+                    metrics_json_file = str(output_dir / f"{input_path.stem}_{FilePrefixes.METRICS}_{task_state.task_id}{FileExtensions.JSON}")
                     with open(metrics_json_file, 'w', encoding='utf-8') as f:
                         json.dump(metrics, f, indent=2, ensure_ascii=False)
                     
@@ -1191,13 +1190,14 @@ async def get_status(task_id: str):
     
     # Try to update progress from logs first (with timeout to avoid blocking)
     # This ensures we return the most up-to-date status information
+    from conf.constants import Timeouts
     import asyncio
     try:
-        # Wait for progress update with a short timeout (500ms)
+        # Wait for progress update with a short timeout
         # If it completes quickly, we get fresh data; if it times out, we use current state
         await asyncio.wait_for(
             update_progress_from_log(task_state, task_id),
-            timeout=0.5
+            timeout=Timeouts.PROGRESS_UPDATE
         )
     except asyncio.TimeoutError:
         # Timeout is acceptable - continue with current state

@@ -10,11 +10,9 @@ import sys
 from typing import List, Optional
 from dataclasses import dataclass
 
-# Add project root to path 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 from data_analysis_tool.models import (
     AnalysisInput,

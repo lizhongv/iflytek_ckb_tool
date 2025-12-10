@@ -12,50 +12,44 @@ from pathlib import Path
 from typing import Dict, Optional
 import logging
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path BEFORE importing conf modules
+# Calculate project root: parent of current file's parent (metrics_analysis_tool -> project root)
+# This ensures conf module can be found when imported from any location
+_current_file = Path(__file__).absolute()
+_project_root = _current_file.parent.parent  # metrics_analysis_tool -> project root
+_project_root_str = str(_project_root)
+if _project_root_str not in sys.path:
+    sys.path.insert(0, _project_root_str)
 
-# Setup root logging
+# Now we can safely import conf modules
+from conf.path_utils import setup_project_path
+setup_project_path()  # Idempotent - won't add duplicate if already added above
+
+# Setup root logging using configuration from config file
 if __name__ == "__main__":
     from conf.logging import setup_root_logging
+    from spark_api_tool.config import config_manager
+    
+    logging_config = config_manager.logging
     setup_root_logging(
-        log_dir="logs",
-        console_level="INFO",
-        file_level="DEBUG",
-        root_level="DEBUG",
-        use_timestamp=False,
-        log_filename_prefix="metrics_analysis_tool",
-        enable_dual_file_logging=True,
-        root_log_filename_prefix="root",
-        root_log_level="INFO"
+        log_dir=logging_config.log_dir,
+        console_level=logging_config.console_level,
+        file_level=logging_config.file_level,
+        root_level=logging_config.root_level,
+        use_timestamp=logging_config.use_timestamp,
+        log_filename_prefix="metrics_analysis_tool",  # Tool-specific prefix
+        enable_dual_file_logging=logging_config.enable_dual_file_logging,
+        root_log_filename_prefix=logging_config.root_log_filename_prefix,
+        root_log_level=logging_config.root_log_level
     )
     logger = logging.getLogger(__name__)
 else:
     logger = logging.getLogger(__name__)
 
-# Type name mapping: English to Chinese
-RETRIEVAL_TYPE_MAPPING = {
-    "NoRecall": "完全未召回",
-    "IncompleteRecall": "召回不全面",
-    "MultiIntentIncomplete": "多意图召回不全",
-    "ComparisonIncomplete": "对比问题召回不全",
-    "TerminologyMismatch": "专业名词/口语化召回错误",
-    "KnowledgeConflict": "检索知识冲突",
-    "CorrectRecall": "召回正确"
-}
-
-RESPONSE_TYPE_MAPPING = {
-    "Fully Correct": "完全正确",
-    "Partially Correct": "部分正确",
-    "Incomplete Information": "信息不完整",
-    "Incorrect Information": "信息错误",
-    "Irrelevant Answer": "无关回答",
-    "Format Error": "格式错误",
-    "Other": "其他问题"
-}
+# Import type mappings from constants
+from conf.constants import TypeMappings
+RETRIEVAL_TYPE_MAPPING = TypeMappings.RETRIEVAL_TYPE_MAPPING
+RESPONSE_TYPE_MAPPING = TypeMappings.RESPONSE_TYPE_MAPPING
 
 
 def translate_type_name(type_name: str, type_category: str = "retrieval") -> str:
@@ -256,7 +250,7 @@ def analyze_recall_metrics(df: pd.DataFrame) -> Dict:
     metrics['标注总数'] = total_count
     
     # Count correct and incorrect retrieval
-    # "检索是否正确": 1=correct (CorrectRecall), 0=incorrect (other types)
+    # "检索是否正确" (Is Retrieval Correct): 1=correct (CorrectRecall), 0=incorrect (other types)
     correct_data = valid_data[valid_data[recall_col] == 1]
     incorrect_data = valid_data[valid_data[recall_col] == 0]
     
@@ -485,22 +479,24 @@ def save_metrics_to_json(metrics: Dict, input_file_path: str) -> str:
     Returns:
         Path to saved JSON file
     """
+    from conf.path_utils import get_data_dir, ensure_dir_exists
+    from conf.constants import FilePrefixes, FileExtensions
+    
     input_path = Path(input_file_path)
+    output_dir = ensure_dir_exists(get_data_dir())
+    
     # Get task_id from context
     try:
         from conf.logging import task_id_context
         task_id = task_id_context.get('')
         if task_id:
-            output_path = input_path.parent / f"{input_path.stem}_metrics_{task_id}.json"
+            output_path = output_dir / f"{input_path.stem}_{FilePrefixes.METRICS}_{task_id}{FileExtensions.JSON}"
         else:
-            output_path = input_path.parent / f"{input_path.stem}_metrics.json"
+            output_path = output_dir / f"{input_path.stem}_{FilePrefixes.METRICS}{FileExtensions.JSON}"
     except Exception:
-        output_path = input_path.parent / f"{input_path.stem}_metrics.json"
+        output_path = output_dir / f"{input_path.stem}_{FilePrefixes.METRICS}{FileExtensions.JSON}"
     
     try:
-        # Ensure output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
         # Write JSON file with indentation for readability
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(metrics, f, indent=2, ensure_ascii=False)
@@ -645,7 +641,7 @@ Examples:
     args = parser.parse_args()
 
     # TODO ? demo testing
-    args.file_path = r"data\test_examples_output_491cf155-3a65-44_analysis_result_491cf155-3a65-44.xlsx"
+    args.file_path = r"data\test_examples_output_task-123456_analysis_result_task-123456.xlsx"
     args.norm_analysis = True
     args.set_analysis = True 
     args.recall_analysis = True
@@ -662,49 +658,49 @@ Examples:
         task_id_context.set(task_id)
         logger.info(f"[TASK_START] task_id={task_id}")
 
-    file_path = args.file_path
-    
-    if not file_path:
+        file_path = args.file_path
+        
+        if not file_path:
             logger.error("[ERROR] File path is required")
-        print("Error: File path is required")
-        parser.print_help()
-        return
-    
-    if not os.path.exists(file_path):
+            print("Error: File path is required")
+            parser.print_help()
+            return
+        
+        if not os.path.exists(file_path):
             logger.error(f"[ERROR] File not found: {file_path}")
-        print(f"Error: File not found: {file_path}")
-        return
-    
-    # Determine which analyses to enable
-    # If --all is set or no specific flags are set, enable all
-    enable_all = args.all or not any([
-        args.norm_analysis, args.set_analysis, 
-        args.recall_analysis, args.reply_analysis
-    ])
-    
-    norm_analysis = enable_all or args.norm_analysis
-    set_analysis = enable_all or args.set_analysis
-    recall_analysis = enable_all or args.recall_analysis
-    reply_analysis = enable_all or args.reply_analysis
-    
-    # Log enabled analyses
-    enabled_analyses = []
-    if norm_analysis:
-        enabled_analyses.append("norm_analysis")
-    if set_analysis:
-        enabled_analyses.append("set_analysis")
-    if recall_analysis:
-        enabled_analyses.append("recall_analysis")
-    if reply_analysis:
-        enabled_analyses.append("reply_analysis")
-    
+            print(f"Error: File not found: {file_path}")
+            return
+        
+        # Determine which analyses to enable
+        # If --all is set or no specific flags are set, enable all
+        enable_all = args.all or not any([
+            args.norm_analysis, args.set_analysis, 
+            args.recall_analysis, args.reply_analysis
+        ])
+        
+        norm_analysis = enable_all or args.norm_analysis
+        set_analysis = enable_all or args.set_analysis
+        recall_analysis = enable_all or args.recall_analysis
+        reply_analysis = enable_all or args.reply_analysis
+        
+        # Log enabled analyses
+        enabled_analyses = []
+        if norm_analysis:
+            enabled_analyses.append("norm_analysis")
+        if set_analysis:
+            enabled_analyses.append("set_analysis")
+        if recall_analysis:
+            enabled_analyses.append("recall_analysis")
+        if reply_analysis:
+            enabled_analyses.append("reply_analysis")
+        
         logger.info(f"[ANALYSIS_CONFIG] Enabled analyses: {enabled_analyses if enabled_analyses else 'none'}")
-    
-    if not enabled_analyses:
+        
+        if not enabled_analyses:
             logger.warning("[WARNING] No analyses enabled, no metrics will be calculated")
-        print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
-        return
-    
+            print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
+            return
+        
         # Analyze metrics
         logger.info(f"[ANALYSIS_START] Starting metrics analysis for file: {file_path}")
         metrics = analyze_metrics(

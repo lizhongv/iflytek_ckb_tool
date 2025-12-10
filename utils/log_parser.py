@@ -115,7 +115,7 @@ def get_latest_progress(log_dir: str = "logs", prefix_log_filename: str = "spark
     
     Args:
         log_dir: Log directory path
-        prefix: Log file prefix
+        prefix_log_filename: Log file prefix
         progress_type: Optional progress type to filter. If None, returns latest progress of any type.
         task_id: Optional task ID to filter. If specified, only returns progress for this task.
                  If None, returns progress for any task (may return progress from different tasks).
@@ -123,7 +123,7 @@ def get_latest_progress(log_dir: str = "logs", prefix_log_filename: str = "spark
     Returns:
         Latest progress information dictionary, or None if not found
     """
-    log_file = find_latest_log_file(log_dir, prefix)
+    log_file = find_latest_log_file(log_dir, prefix_log_filename)
     if not log_file:
         return None
     
@@ -205,18 +205,9 @@ if __name__ == "__main__":
                        help='Log directory path (default: logs)')
     args = parser.parse_args()
     
-    # TODO: To test the log parser
-    # args.progress_type = "RECALL_ANALYSIS_PROGRESS"
-    # args.progress_type = "REPLY_ANALYSIS_PROGRESS"
-    # args.progress_type = "DATA_ANALYSIS_PROGRESS"
-    # args.progress_type = "NORM_ANALYSIS_PROGRESS"
-    # args.progress_type = "SET_ANALYSIS_PROGRESS"
-    # args.task_id = "491cf155-3a65-44"
-    # args.prefix = "data_analysis_tool"
-    
     progress = get_latest_progress(
         log_dir=args.log_dir,
-        prefix_log_filename=args.prefix_log_filename, 
+        prefix_log_filename=args.prefix,
         progress_type=args.progress_type,
         task_id=args.task_id
     )
@@ -235,3 +226,4 @@ if __name__ == "__main__":
             logger.warning(f"No progress information found for type: {args.progress_type}")
         else:
             logger.warning("No progress information found")
+

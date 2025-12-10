@@ -9,11 +9,9 @@ from pathlib import Path
 import sys
 import os
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 from data_analysis_tool.models import AnalysisInput, AnalysisResult
 
@@ -86,15 +84,15 @@ class ExcelHandler:
             if response_col and not pd.isna(row.get(response_col)):
                 model_response = str(row.get(response_col, '')).strip()
             
-            # Extract source list (find columns containing 'source' or '溯源')
-            # Priority: look for 溯源1, 溯源2, ..., 溯源10 (or more), then fallback to other source columns
+            # Extract source list (find columns containing 'source' or '溯源' - source trace)
+            # Priority: look for numbered source columns (溯源1, 溯源2, ..., 溯源10 or more), then fallback to other source columns
             # Note: sources are needed for recall analysis, not just when chunk_selected
             sources = []
             # First, try to find numbered source columns (溯源1~溯源10 or more)
             # Dynamically detect the maximum number of source columns
             max_source_num = 0
             for col in self.df.columns:
-                if str(col).startswith('溯源'):
+                if str(col).startswith('溯源'):  # Source trace column prefix
                     # Extract number from column name like "溯源1", "溯源10", etc.
                     try:
                         num_str = str(col).replace('溯源', '').strip()
@@ -200,10 +198,10 @@ class ExcelHandler:
                 row_data['问题（非）规范性类型'] = ''
                 row_data['问题（非）规范性理由'] = ''
             
-            # Set analysis results - in/out set judgment - use Chinese column names
+            # Set analysis results - in/out set judgment - use Chinese column names for Excel display
             if result.set_analysis:
                 row_data['问题是否在集'] = result.set_analysis.is_in_set if result.set_analysis.is_in_set is not None else ''
-                # Convert "out_of_domain" to "集外问题" for compatibility
+                # Convert "out_of_domain" to "集外问题" (Out-of-Domain) for compatibility with Excel column display
                 in_out_type = result.set_analysis.in_out_type if result.set_analysis.in_out_type else ''
                 if in_out_type == 'out_of_domain':
                     in_out_type = '集外问题'
@@ -214,9 +212,9 @@ class ExcelHandler:
                 row_data['问题（非）在集类型'] = ''
                 row_data['问题（非）在集理由'] = ''
             
-            # Recall analysis results - retrieval judgment (by source) - use Chinese column names
+            # Recall analysis results - retrieval judgment (by source) - use Chinese column names for Excel display
             if result.recall_analysis and result.recall_analysis.is_retrieval_correct is not None:
-                # is_retrieval_correct: 1=正确(CorrectRecall), 0=错误(其他类型如NoRecall, MultiIntentIncomplete等)
+                # is_retrieval_correct: 1=correct (CorrectRecall), 0=incorrect (other types like NoRecall, MultiIntentIncomplete, etc.)
                 row_data['检索是否正确'] = result.recall_analysis.is_retrieval_correct
                 row_data['检索正误类型'] = result.recall_analysis.retrieval_judgment_type if result.recall_analysis.retrieval_judgment_type else ''
                 row_data['检索正误理由'] = result.recall_analysis.retrieval_reason if result.recall_analysis.retrieval_reason else ''

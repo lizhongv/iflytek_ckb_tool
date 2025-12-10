@@ -11,11 +11,9 @@ import sys
 import os
 
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 from spark_api_tool.config import config_manager
 
@@ -170,6 +168,7 @@ class ExcelHandler:
             raise
         
         # Find column names
+        # Find column names (support both Chinese and English column names)
         conv_id_col = self._find_column(['对话ID', 'conversation_id', 'conversationId', '对话id'])
         question_col = self._find_column(['用户问题', '问题', 'question', 'query'])
         correct_answer_col = self._find_column(['参考答案', '正确答案', 'correct_answer', 'answer'])
@@ -177,7 +176,7 @@ class ExcelHandler:
         
         # Validate required columns
         if not question_col:
-            raise ValueError("Required column '用户问题' (or 'question') not found in Excel file")
+            raise ValueError("Required column '用户问题' (User Question) or 'question' not found in Excel file")
         
         # Check if conversation ID column exists to determine mode
         has_conversation_id = conv_id_col is not None
@@ -275,25 +274,25 @@ class ExcelHandler:
         # Check if any group has conversation_id (multi-turn mode)
         has_conversation_id = any(group.conversation_id is not None for group in groups)
         
-        # Remove '对话ID' column if single-turn mode (no conversation IDs)
+        # Remove '对话ID' (Conversation ID) column if single-turn mode (no conversation IDs)
         if not has_conversation_id and '对话ID' in df.columns:
             df = df.drop(columns=['对话ID'])
-            logger.debug("Single-turn mode detected: '对话ID' column removed from output")
+            logger.debug("Single-turn mode detected: '对话ID' (Conversation ID) column removed from output")
         elif has_conversation_id:
-            logger.debug("Multi-turn mode detected: '对话ID' column included in output")
+            logger.debug("Multi-turn mode detected: '对话ID' (Conversation ID) column included in output")
         
         # Get max sources count from config
         max_sources = config_manager.mission.knowledge_num
         
         # Define column order (dynamic based on config and conversation mode)
-        # Only include '对话ID' column if there are multi-turn conversations
+        # Only include '对话ID' (Conversation ID) column if there are multi-turn conversations
         if has_conversation_id:
-            base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
+            base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']  # Conversation ID, User Question, Reference Source, Reference Answer
         else:
-            base_columns = ['用户问题', '参考溯源', '参考答案']
+            base_columns = ['用户问题', '参考溯源', '参考答案']  # User Question, Reference Source, Reference Answer
         
-        source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]
-        result_columns = ['模型回复', 'RequestId', 'SessionId']
+        source_columns = [f'溯源{i}' for i in range(1, max_sources + 1)]  # Source trace columns (溯源1, 溯源2, ...)
+        result_columns = ['模型回复', 'RequestId', 'SessionId']  # Model Response, Request ID, Session ID
         column_order = base_columns + source_columns + result_columns
         
         # Reorder columns (only include columns that exist)
@@ -318,7 +317,7 @@ class ExcelHandler:
         
         Args:
             groups: List of ConversationGroup objects with results
-            output_path: Output file path (will be converted to .jsonl)
+            output_path: Output file path (should include .jsonl extension)
         """
         result_data = []
         
@@ -330,9 +329,13 @@ class ExcelHandler:
             logger.warning("No data to write to JSONL")
             return
         
-        # Convert output path to .jsonl extension
+        # Ensure output path has .jsonl extension
         output_path_obj = Path(output_path)
-        jsonl_path = output_path_obj.with_suffix('.jsonl')
+        if output_path_obj.suffix.lower() != '.jsonl':
+            jsonl_path = output_path_obj.with_suffix('.jsonl')
+            logger.warning(f"Output path extension changed from '{output_path_obj.suffix}' to '.jsonl': {jsonl_path}")
+        else:
+            jsonl_path = output_path_obj
         
         try:
             # Ensure output directory exists

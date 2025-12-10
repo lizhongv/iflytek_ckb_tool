@@ -11,11 +11,9 @@ from pathlib import Path
 from typing import Dict, Optional
 import logging
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 from llm.deepseek_api import deepseek_chat
 from metrics_analysis_tool.prompts import REPORT_ANALYSIS_PROMPT, REPORT_SYNTHESIS_PROMPT
@@ -148,7 +146,7 @@ class ReportGenerator:
         """
         try:
             # Round 1: Initial analysis
-            logger.info("[REPORT_GENERATION] Generating initial analysis...")
+            logger.info("Generating initial analysis...")
             analysis_prompt = self._build_analysis_prompt()
             messages_round1 = [
                 {"role": "system", "content": "你是一位专业的数据质量分析专家，擅长从多维度分析数据集质量并给出改进建议。"},
@@ -162,7 +160,7 @@ class ReportGenerator:
                 base_url=self.llm_config['base_url']
             )
             
-            logger.info("[REPORT_GENERATION] Initial analysis completed, generating formatted report...")
+            logger.info("Initial analysis completed, generating formatted report...")
             
             # Round 2: Synthesis and formatting
             synthesis_prompt = self._build_synthesis_prompt(initial_analysis)
@@ -178,11 +176,11 @@ class ReportGenerator:
                 base_url=self.llm_config['base_url']
             )
             
-            logger.info("[REPORT_GENERATION] Report generation completed")
+            logger.info("Report generation completed")
             return final_report
             
         except Exception as e:
-            logger.error(f"[ERROR] Failed to generate report: {e}", exc_info=True)
+            logger.error(f"Failed to generate report: {e}", exc_info=True)
             raise
     
     def save_report(self, report: str, input_file_path: str) -> str:
@@ -228,12 +226,12 @@ class ReportGenerator:
                 f.write(metadata)
                 f.write(report)
             
-            logger.info(f"[FILE_WRITE] Report saved to: {output_path}")
+            logger.info(f"Report saved to: {output_path}")
             return str(output_path)
         except PermissionError:
-            logger.error(f"[ERROR] File is locked by another program, cannot write report: {output_path}")
+            logger.error(f"File is locked by another program, cannot write report: {output_path}")
             raise
         except Exception as e:
-            logger.error(f"[ERROR] Failed to save report: {e}")
+            logger.error(f"Failed to save report: {e}")
             raise
 

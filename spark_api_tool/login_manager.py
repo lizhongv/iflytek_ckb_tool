@@ -23,11 +23,9 @@ from typing import Optional
 import sys
 import os
 
-# Add project root to path for importing conf modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path using unified utility
+from conf.path_utils import setup_project_path
+setup_project_path()
 
 from conf.error_codes import ErrorCode
 from spark_api_tool.config import config_manager

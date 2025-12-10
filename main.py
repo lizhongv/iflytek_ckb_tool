@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Import batch processing modules
 from spark_api_tool.main import process_batch
-from spark_api_tool.excel_io import ExcelHandler as BatchExcelHandler, ConversationGroup
+from spark_api_tool.excel_handler import ExcelHandler as BatchExcelHandler, ConversationGroup
 from spark_api_tool.config import config_manager
 
 # Import data analysis modules

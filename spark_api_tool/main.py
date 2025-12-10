@@ -13,29 +13,35 @@ from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
 
-# Add current directory (spark_api_tool) to path for local imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# if current_dir not in sys.path:
-#     sys.path.insert(0, current_dir)
+# Setup project path BEFORE importing conf modules
+# Calculate project root: parent of current file's parent (spark_api_tool -> project root)
+# This ensures conf module can be found when imported from any location
+_current_file = Path(__file__).absolute()
+_project_root = _current_file.parent.parent  # spark_api_tool -> project root
+_project_root_str = str(_project_root)
+if _project_root_str not in sys.path:
+    sys.path.insert(0, _project_root_str)
 
-# Add project root to path for importing conf modules
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Now we can safely import conf modules
+from conf.path_utils import setup_project_path
+setup_project_path()  # Idempotent - won't add duplicate if already added above
 
 if __name__ == "__main__":
-    # Setup root logging - this must be done before importing other modules that use logging
+    # Setup root logging using configuration from config file
     from conf.logging import setup_root_logging
+    from spark_api_tool.config import config_manager
+    
+    logging_config = config_manager.logging
     setup_root_logging(
-        log_dir="logs",
-        console_level="INFO",
-        file_level="DEBUG",
-        root_level="DEBUG",
-        use_timestamp=False,
-        log_filename_prefix="spark_api_tool",
-        enable_dual_file_logging=True,
-        root_log_filename_prefix="root",
-        root_log_level="INFO"
+        log_dir=logging_config.log_dir,
+        console_level=logging_config.console_level,
+        file_level=logging_config.file_level,
+        root_level=logging_config.root_level,
+        use_timestamp=logging_config.use_timestamp,
+        log_filename_prefix="spark_api_tool",  # Tool-specific prefix
+        enable_dual_file_logging=logging_config.enable_dual_file_logging,
+        root_log_filename_prefix=logging_config.root_log_filename_prefix,
+        root_log_level=logging_config.root_log_level
     )
     logger = logging.getLogger(__name__)
 else:
@@ -46,8 +52,8 @@ else:
 # Note: When run directly, Python adds spark_api_tool to sys.path[0], so absolute imports work
 # When imported as module, parent_dir is in sys.path, so we use spark_api_tool.xxx imports
 # We use spark_api_tool.xxx to ensure it works in both cases
-from spark_api_tool.ckb import CkbClient
-from spark_api_tool.excel_io import ExcelHandler, ConversationGroup, ConversationTask
+from spark_api_tool.ckb_client import CkbClient
+from spark_api_tool.excel_handler import ExcelHandler, ConversationGroup, ConversationTask
 from spark_api_tool.config import config_manager
 from conf.error_codes import ErrorCode, create_response, get_success_response
 
@@ -233,7 +239,7 @@ async def main(input_file: Optional[str] = None) -> dict:
         # This should be done at the very beginning so all logs (including file reading) include task_id
         from conf.logging import task_id_context
         # task_id = str(uuid.uuid4())[:16]
-        task_id = "491cf155-3a65-44"
+        task_id = "task-123456"
         task_id_context.set(task_id)
         logger.info(f"[TASK_START] task_id={task_id}")
         
@@ -268,46 +274,42 @@ async def main(input_file: Optional[str] = None) -> dict:
             logger.error(f"[ERROR] Batch processing failed: {e}", exc_info=True)
             return create_response(False, ErrorCode.PROCESS_GROUP_FAILED, str(e))
         
-        # Generate output file path with task_id (directly in code, not from config)
-        input_path = Path(input_file)
-        output_dir = input_path.parent 
-        output_dir.mkdir(parents=True, exist_ok=True)
-        # Use task_id in filename
-        output_file = str(output_dir / f"{input_path.stem}_output_{task_id}.xlsx")
-
-        #  output_dir = os.path.dirname(output_file) if os.path.dirname(output_file) else 'data'
-        #  base_name = os.path.basename(output_file)
-        #  name, ext = os.path.splitext(base_name)
-        # Use task_id in filename
-        # output_file = os.path.join(output_dir, f"{name}_{task_id}{ext}")
-
+        # Generate output file paths with task_id using unified utilities
+        from conf.path_utils import get_data_dir, ensure_dir_exists
+        from conf.constants import FilePrefixes, FileExtensions
         
+        input_path = Path(input_file)
+        output_dir = ensure_dir_exists(get_data_dir())
+        
+        # Generate separate file paths for Excel and JSONL
+        base_filename = f"{input_path.stem}_{FilePrefixes.OUTPUT}_{task_id}"
+        excel_file = str(output_dir / f"{base_filename}{FileExtensions.EXCEL}")
+        jsonl_file = str(output_dir / f"{base_filename}{FileExtensions.JSONL}")
         
         # Save results to Excel
-        logger.info(f"[FILE_WRITE] Saving results to: {output_file}")
+        logger.info(f"[FILE_WRITE] Saving Excel results to: {excel_file}")
         try:
-            handler.write_results_excel(processed_groups, output_file)
-            logger.info(f"[FILE_WRITE] Excel file saved successfully")
+            handler.write_results_excel(processed_groups, excel_file)
         except PermissionError:
-            logger.error(f"[ERROR] File is locked by another program: {output_file}")
-            return create_response(False, ErrorCode.FILE_LOCKED, output_file)
+            logger.error(f"[ERROR] File is locked by another program: {excel_file}")
+            return create_response(False, ErrorCode.FILE_LOCKED, excel_file)
         except Exception as e:
             logger.error(f"[ERROR] Failed to save Excel results: {e}")
             return create_response(False, ErrorCode.FILE_WRITE_ERROR, str(e))
         
         # Save results to JSONL
+        logger.info(f"[FILE_WRITE] Saving JSONL results to: {jsonl_file}")
         try:
-            handler.write_results_jsonl(processed_groups, output_file)
-            logger.info(f"[FILE_WRITE] JSONL file saved successfully")
+            handler.write_results_jsonl(processed_groups, jsonl_file)
         except PermissionError:
-            logger.error(f"[ERROR] File is locked by another program (JSONL): {output_file}.jsonl")
-            return create_response(False, ErrorCode.FILE_LOCKED, f"{output_file}.jsonl")
+            logger.error(f"[ERROR] File is locked by another program: {jsonl_file}")
+            return create_response(False, ErrorCode.FILE_LOCKED, jsonl_file)
         except Exception as e:
             logger.error(f"[ERROR] Failed to save JSONL results: {e}")
             return create_response(False, ErrorCode.FILE_WRITE_ERROR, f"JSONL: {str(e)}")
         
         code, message = get_success_response()
-        logger.info(f"[TASK_COMPLETE] task_id={task_id} code={code} message=\"{message}\" output_file=\"{output_file}\"")
+        logger.info(f"[TASK_COMPLETE] task_id={task_id} code={code} message=\"{message}\" excel_file=\"{excel_file}\" jsonl_file=\"{jsonl_file}\"")
         return create_response(True)
         
     except Exception as e:

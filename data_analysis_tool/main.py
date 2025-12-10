@@ -11,25 +11,35 @@ import logging
 from typing import List
 from pathlib import Path
 
-# Add project root to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Setup project path BEFORE importing conf modules
+# Calculate project root: parent of current file's parent (data_analysis_tool -> project root)
+# This ensures conf module can be found when imported from any location
+_current_file = Path(__file__).absolute()
+_project_root = _current_file.parent.parent  # data_analysis_tool -> project root
+_project_root_str = str(_project_root)
+if _project_root_str not in sys.path:
+    sys.path.insert(0, _project_root_str)
+
+# Now we can safely import conf modules
+from conf.path_utils import setup_project_path
+setup_project_path()  # Idempotent - won't add duplicate if already added above
 
 if __name__ == "__main__":
-    # Setup root logging - this must be done before importing other modules that use logging
+    # Setup root logging using configuration from config file
     from conf.logging import setup_root_logging
+    from spark_api_tool.config import config_manager
+    
+    logging_config = config_manager.logging
     setup_root_logging(
-        log_dir="logs",
-        console_level="INFO",
-        file_level="DEBUG",
-        root_level="DEBUG",
-        use_timestamp=False,
-        log_filename_prefix="data_analysis_tool",
-        enable_dual_file_logging=True,
-        root_log_filename_prefix="root",
-        root_log_level="INFO"
+        log_dir=logging_config.log_dir,
+        console_level=logging_config.console_level,
+        file_level=logging_config.file_level,
+        root_level=logging_config.root_level,
+        use_timestamp=logging_config.use_timestamp,
+        log_filename_prefix="data_analysis_tool",  # Tool-specific prefix
+        enable_dual_file_logging=logging_config.enable_dual_file_logging,
+        root_log_filename_prefix=logging_config.root_log_filename_prefix,
+        root_log_level=logging_config.root_log_level
     )
     logger = logging.getLogger(__name__)
 else:
@@ -468,7 +478,7 @@ async def main() -> dict:
         # This should be done at the very beginning so all logs include task_id
         from conf.logging import task_id_context
         # task_id = str(uuid.uuid4())[:16]
-        task_id = "491cf155-3a65-44"
+        task_id = "task-123456"
         task_id_context.set(task_id)
         logger.info(f"[TASK_START] task_id={task_id}")
         # Parse command line arguments or use default config
@@ -505,7 +515,7 @@ async def main() -> dict:
             # Default configuration
             config = AnalysisConfig(
                 query_selected=True,
-                file_path=r"data\test_examples_output_491cf155-3a65-44.xlsx",
+                file_path=r"data\test_examples_output_task-123456.xlsx",
                 chunk_selected=True,
                 answer_selected=True,
                 problem_analysis=True,
