@@ -4,12 +4,18 @@ pip install uv
 uv sync
 # .venv\Scripts\activate
 # deactivate
+
+# windows prot
+netstat -ano | findstr :8000
+# kill process
+taskkill /PID 12342 /F
 ```
 
 ## 启动 APP
 
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload --log-level info
+uvicorn app:app --host 0.0.0.0 --port 8000 --log-level info
 ```
 
 ## API 接口调用

@@ -630,31 +630,45 @@ async def update_progress_from_log(task_state: TaskState, task_id: str):
                 timeout=Timeouts.LOG_READ  # Total timeout for all reads
             )
             
+            # Read current statuses (inside lock) to check if task is cancelled or status is CANCELLED
+            with task_state.lock:
+                # Check if task is cancelled
+                if task_state.cancelled:
+                    logger.debug(f"Task {task_id} is cancelled, skipping progress update from log")
+                    return
+                
+                # Read current statuses to avoid updating CANCELLED statuses
+                batch_status = task_state.batch_status
+                norm_status = task_state.norm_status
+                set_status = task_state.set_status
+                recall_status = task_state.recall_status
+                reply_status = task_state.reply_status
+            
             # Collect all updates first, then update in a single call to minimize lock contention
             updates = {}
             
-            # Update batch progress
-            if batch_progress and not isinstance(batch_progress, Exception):
+            # Update batch progress (only if not already CANCELLED)
+            if batch_progress and not isinstance(batch_progress, Exception) and batch_status != TaskStatus.CANCELLED:
                 updates['batch_progress'] = batch_progress['percent']
                 updates['batch_status'] = TaskStatus.IN_PROGRESS if batch_progress['percent'] < 100 else TaskStatus.COMPLETED
             
-            # Update norm progress
-            if norm_progress and not isinstance(norm_progress, Exception):
+            # Update norm progress (only if not already CANCELLED)
+            if norm_progress and not isinstance(norm_progress, Exception) and norm_status != TaskStatus.CANCELLED:
                 updates['norm_progress'] = norm_progress['percent']
                 updates['norm_status'] = TaskStatus.IN_PROGRESS if norm_progress['percent'] < 100 else TaskStatus.COMPLETED
             
-            # Update set progress
-            if set_progress and not isinstance(set_progress, Exception):
+            # Update set progress (only if not already CANCELLED)
+            if set_progress and not isinstance(set_progress, Exception) and set_status != TaskStatus.CANCELLED:
                 updates['set_progress'] = set_progress['percent']
                 updates['set_status'] = TaskStatus.IN_PROGRESS if set_progress['percent'] < 100 else TaskStatus.COMPLETED
             
-            # Update recall progress
-            if recall_progress and not isinstance(recall_progress, Exception):
+            # Update recall progress (only if not already CANCELLED)
+            if recall_progress and not isinstance(recall_progress, Exception) and recall_status != TaskStatus.CANCELLED:
                 updates['recall_progress'] = recall_progress['percent']
                 updates['recall_status'] = TaskStatus.IN_PROGRESS if recall_progress['percent'] < 100 else TaskStatus.COMPLETED
             
-            # Update reply progress
-            if reply_progress and not isinstance(reply_progress, Exception):
+            # Update reply progress (only if not already CANCELLED)
+            if reply_progress and not isinstance(reply_progress, Exception) and reply_status != TaskStatus.CANCELLED:
                 updates['reply_progress'] = reply_progress['percent']
                 updates['reply_status'] = TaskStatus.IN_PROGRESS if reply_progress['percent'] < 100 else TaskStatus.COMPLETED
             
@@ -1229,6 +1243,7 @@ async def download_files(task_id: str):
     Returns:
         DownloadResponse with file paths
     """
+    # 1. Check if task exists
     task_state = get_task_state(task_id)
     
     if not task_state:
@@ -1239,36 +1254,94 @@ async def download_files(task_id: str):
             success=False
         )
     
-    # Check if files are ready
-    if not task_state.excel_file:
-        code, message = get_error_response(ErrorCode.FILE_NOT_FOUND, f"Task {task_id} has not generated output files yet")
+    # 2. Read task state (inside lock, then check outside lock)
+    with task_state.lock:
+        total_progress = task_state.get_total_progress()
+        batch_status = task_state.batch_status
+        norm_status = task_state.norm_status
+        set_status = task_state.set_status
+        recall_status = task_state.recall_status
+        reply_status = task_state.reply_status
+        metrics_status = task_state.metrics_status
+        excel_file = task_state.excel_file
+        json_file = task_state.json_file
+        report_file = task_state.report_file
+    
+    # 3. Check if task is completed (total progress 100%)
+    if total_progress < 100.0:
+        code, message = get_error_response(
+            ErrorCode.SYSTEM_EXCEPTION, 
+            f"Task {task_id} is not completed yet. Current progress: {total_progress:.1f}%"
+        )
         return DownloadResponse(
             code=code,
             message=message,
             success=False
         )
     
-    # Check if files exist
-    excel_exists = task_state.excel_file and os.path.exists(task_state.excel_file)
-    json_exists = task_state.json_file and os.path.exists(task_state.json_file)
-    report_exists = task_state.report_file and os.path.exists(task_state.report_file)
+    # 4. Check if any tool is still running
+    running_tools = []
+    if batch_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("批量处理")
+    if norm_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("问题分析")
+    if set_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("集合分析")
+    if recall_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("召回分析")
+    if reply_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("回复分析")
+    if metrics_status == TaskStatus.IN_PROGRESS:
+        running_tools.append("指标分析")
+    
+    if running_tools:
+        code, message = get_error_response(
+            ErrorCode.SYSTEM_EXCEPTION,
+            f"Task {task_id} is still running. The following tools are in progress: {', '.join(running_tools)}"
+        )
+        return DownloadResponse(
+            code=code,
+            message=message,
+            success=False
+        )
+    
+    # 5. Check if files have been saved
+    if not excel_file:
+        code, message = get_error_response(
+            ErrorCode.FILE_NOT_FOUND,
+            f"Task {task_id} is completed, but output files have not been generated yet"
+        )
+        return DownloadResponse(
+            code=code,
+            message=message,
+            success=False
+        )
+    
+    # 6. Check if files exist on disk (outside lock to avoid blocking)
+    excel_exists = excel_file and os.path.exists(excel_file)
+    json_exists = json_file and os.path.exists(json_file)
+    report_exists = report_file and os.path.exists(report_file)
     
     if not excel_exists:
-        code, message = get_error_response(ErrorCode.FILE_NOT_FOUND, f"Excel file not found for task {task_id}")
+        code, message = get_error_response(
+            ErrorCode.FILE_NOT_FOUND,
+            f"Excel file not found on disk for task {task_id}: {excel_file}"
+        )
         return DownloadResponse(
             code=code,
             message=message,
             success=False
         )
     
+    # 7. Return file paths
     code, message = get_success_response()
     return DownloadResponse(
         code=code,
         message=f"Files ready for task {task_id}",
         success=True,
-        excel_file=task_state.excel_file,
-        json_file=task_state.json_file if json_exists else None,
-        report_file=task_state.report_file if report_exists else None
+        excel_file=excel_file,
+        json_file=json_file if json_exists else None,
+        report_file=report_file if report_exists else None
     )
 
 
@@ -1305,25 +1378,34 @@ async def interrupt_task(task_id: str):
             intermediate_file=task_state.intermediate_file
         )
     
-    # Cancel the task
-    task_state.cancel()
+    # Cancel the task and update all running/not-started statuses to CANCELLED
+    with task_state.lock:
+        # Mark as cancelled first
+        task_state.cancelled = True
+        task_state.updated_at = datetime.now()
+        
+        # Collect all status updates - update IN_PROGRESS and NOT_STARTED to CANCELLED
+        updates = {}
+        if task_state.batch_status == TaskStatus.IN_PROGRESS or task_state.batch_status == TaskStatus.NOT_STARTED:
+            updates['batch_status'] = TaskStatus.CANCELLED
+        if task_state.norm_status == TaskStatus.IN_PROGRESS or task_state.norm_status == TaskStatus.NOT_STARTED:
+            updates['norm_status'] = TaskStatus.CANCELLED
+        if task_state.set_status == TaskStatus.IN_PROGRESS or task_state.set_status == TaskStatus.NOT_STARTED:
+            updates['set_status'] = TaskStatus.CANCELLED
+        if task_state.recall_status == TaskStatus.IN_PROGRESS or task_state.recall_status == TaskStatus.NOT_STARTED:
+            updates['recall_status'] = TaskStatus.CANCELLED
+        if task_state.reply_status == TaskStatus.IN_PROGRESS or task_state.reply_status == TaskStatus.NOT_STARTED:
+            updates['reply_status'] = TaskStatus.CANCELLED
+        if task_state.metrics_status == TaskStatus.IN_PROGRESS or task_state.metrics_status == TaskStatus.NOT_STARTED:
+            updates['metrics_status'] = TaskStatus.CANCELLED
+        
+        # Store file paths before releasing lock
+        excel_file = task_state.excel_file
+        json_file = task_state.json_file
+        report_file = task_state.report_file
+        intermediate_file = task_state.intermediate_file
     
-    # Collect all status updates and update in a single call to minimize lock contention
-    updates = {}
-    if task_state.batch_status == TaskStatus.IN_PROGRESS:
-        updates['batch_status'] = TaskStatus.CANCELLED
-    if task_state.norm_status == TaskStatus.IN_PROGRESS:
-        updates['norm_status'] = TaskStatus.CANCELLED
-    if task_state.set_status == TaskStatus.IN_PROGRESS:
-        updates['set_status'] = TaskStatus.CANCELLED
-    if task_state.recall_status == TaskStatus.IN_PROGRESS:
-        updates['recall_status'] = TaskStatus.CANCELLED
-    if task_state.reply_status == TaskStatus.IN_PROGRESS:
-        updates['reply_status'] = TaskStatus.CANCELLED
-    if task_state.metrics_status == TaskStatus.IN_PROGRESS:
-        updates['metrics_status'] = TaskStatus.CANCELLED
-    
-    # Update all at once to minimize lock acquisition
+    # Update all statuses at once (outside lock to avoid nested lock)
     if updates:
         task_state.update_status(**updates)
     
@@ -1334,10 +1416,10 @@ async def interrupt_task(task_id: str):
         code=code,
         message=f"Task {task_id} interrupted successfully",
         success=True,
-        excel_file=task_state.excel_file if task_state.excel_file and os.path.exists(task_state.excel_file) else None,
-        json_file=task_state.json_file if task_state.json_file and os.path.exists(task_state.json_file) else None,
-        report_file=task_state.report_file if task_state.report_file and os.path.exists(task_state.report_file) else None,
-        intermediate_file=task_state.intermediate_file if task_state.intermediate_file and os.path.exists(task_state.intermediate_file) else None
+        excel_file=excel_file if excel_file and os.path.exists(excel_file) else None,
+        json_file=json_file if json_file and os.path.exists(json_file) else None,
+        report_file=report_file if report_file and os.path.exists(report_file) else None,
+        intermediate_file=intermediate_file if intermediate_file and os.path.exists(intermediate_file) else None
     )
 
 
