@@ -21,13 +21,21 @@ if current_dir not in sys.path:
 
 # Setup root logging first - this must be done before importing other modules
 from conf.logging import setup_root_logging
+
+# Import config manager to get logging configuration
+from spark_api_tool.config import config_manager
+
+# Setup logging using configuration from batch_config.yaml
 setup_root_logging(
-    log_dir="log",
-    console_level="INFO",
-    file_level="DEBUG",
-    root_level="DEBUG",
-    use_timestamp=True,
-    log_filename_prefix="ckb_qa_tool_api"
+    log_dir=config_manager.logging.log_dir,
+    console_level=config_manager.logging.console_level,
+    file_level=config_manager.logging.file_level,
+    root_level=config_manager.logging.root_level,
+    use_timestamp=config_manager.logging.use_timestamp,
+    log_filename_prefix=config_manager.logging.log_filename_prefix,
+    enable_dual_file_logging=config_manager.logging.enable_dual_file_logging,
+    root_log_filename_prefix=config_manager.logging.root_log_filename_prefix,
+    root_log_level=config_manager.logging.root_log_level
 )
 
 # Import logging module for use in this file
@@ -54,7 +62,7 @@ from data_analysis_tool.models import AnalysisInput, AnalysisResult
 from metrics_analysis_tool.main import analyze_metrics, print_metrics_report
 
 # Import error handling
-from conf.error_codes import ErrorCode, create_response
+from conf.error_codes import ErrorCode, create_response, get_success_response, get_error_response
 
 # Import log parser for progress tracking
 from log_parser2 import get_latest_progress
@@ -78,7 +86,7 @@ class TaskState:
     """Task state management class"""
     def __init__(self, task_id: str):
         self.task_id = task_id
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()  # Use RLock to allow nested lock acquisition 
         self.cancelled = False
         
         # Task status
@@ -100,6 +108,7 @@ class TaskState:
         # File paths
         self.excel_file = None
         self.json_file = None
+        self.report_file = None  # Quality analysis report (Markdown)
         self.intermediate_file = None
         
         # Error message
@@ -152,107 +161,113 @@ class TaskState:
                 self.excel_file = kwargs['excel_file']
             if 'json_file' in kwargs:
                 self.json_file = kwargs['json_file']
+            if 'report_file' in kwargs:
+                self.report_file = kwargs['report_file']
             if 'intermediate_file' in kwargs:
                 self.intermediate_file = kwargs['intermediate_file']
             if 'error_message' in kwargs:
                 self.error_message = kwargs['error_message']
     
     def get_total_progress(self) -> float:
-        """Calculate total progress based on weights"""
-        with self.lock:
-            # Weights: batch=30%, norm=10%, set=10%, recall=20%, reply=20%, metrics=10%
-            total = 0.0
-            
-            # Batch processing: 30%
-            if self.batch_status == TaskStatus.COMPLETED:
+        """
+        Calculate total progress based on weights
+        
+        Note: This method should be called while holding self.lock.
+        It doesn't acquire the lock itself to avoid deadlock when called from to_dict().
+        """
+        # Weights: batch=30%, norm=10%, set=10%, recall=20%, reply=20%, metrics=10%
+        total = 0.0
+        
+        # Batch processing: 30%
+        if self.batch_status == TaskStatus.COMPLETED:
+            total += 30.0
+        elif self.batch_status == TaskStatus.IN_PROGRESS:
+            total += 30.0 * (self.batch_progress / 100.0)
+        elif self.batch_status == TaskStatus.SKIPPED:
+            total += 30.0  # Skipped tasks are treated as completed
+        elif self.batch_status == TaskStatus.CANCELLED:
+            total += 30.0 * (self.batch_progress / 100.0)  # Partial progress
+        elif self.batch_status == TaskStatus.NOT_STARTED:
+            # If later tasks are running, assume batch is done
+            if (self.norm_status != TaskStatus.NOT_STARTED or 
+                self.set_status != TaskStatus.NOT_STARTED or
+                self.recall_status != TaskStatus.NOT_STARTED or
+                self.reply_status != TaskStatus.NOT_STARTED):
                 total += 30.0
-            elif self.batch_status == TaskStatus.IN_PROGRESS:
-                total += 30.0 * (self.batch_progress / 100.0)
-            elif self.batch_status == TaskStatus.SKIPPED:
-                total += 30.0  # Skipped tasks are treated as completed
-            elif self.batch_status == TaskStatus.CANCELLED:
-                total += 30.0 * (self.batch_progress / 100.0)  # Partial progress
-            elif self.batch_status == TaskStatus.NOT_STARTED:
-                # If later tasks are running, assume batch is done
-                if (self.norm_status != TaskStatus.NOT_STARTED or 
-                    self.set_status != TaskStatus.NOT_STARTED or
-                    self.recall_status != TaskStatus.NOT_STARTED or
-                    self.reply_status != TaskStatus.NOT_STARTED):
-                    total += 30.0
-            
-            # Norm analysis: 10%
-            if self.norm_status == TaskStatus.COMPLETED:
+        
+        # Norm analysis: 10%
+        if self.norm_status == TaskStatus.COMPLETED:
+            total += 10.0
+        elif self.norm_status == TaskStatus.IN_PROGRESS:
+            total += 10.0 * (self.norm_progress / 100.0)
+        elif self.norm_status == TaskStatus.SKIPPED:
+            total += 10.0
+        elif self.norm_status == TaskStatus.CANCELLED:
+            total += 10.0 * (self.norm_progress / 100.0)
+        elif self.norm_status == TaskStatus.NOT_STARTED:
+            # If later tasks are running, assume norm is done
+            if (self.set_status != TaskStatus.NOT_STARTED or
+                self.recall_status != TaskStatus.NOT_STARTED or
+                self.reply_status != TaskStatus.NOT_STARTED or
+                self.metrics_status != TaskStatus.NOT_STARTED):
                 total += 10.0
-            elif self.norm_status == TaskStatus.IN_PROGRESS:
-                total += 10.0 * (self.norm_progress / 100.0)
-            elif self.norm_status == TaskStatus.SKIPPED:
+        
+        # Set analysis: 10%
+        if self.set_status == TaskStatus.COMPLETED:
+            total += 10.0
+        elif self.set_status == TaskStatus.IN_PROGRESS:
+            total += 10.0 * (self.set_progress / 100.0)
+        elif self.set_status == TaskStatus.SKIPPED:
+            total += 10.0
+        elif self.set_status == TaskStatus.CANCELLED:
+            total += 10.0 * (self.set_progress / 100.0)
+        elif self.set_status == TaskStatus.NOT_STARTED:
+            # If later tasks are running, assume set is done
+            if (self.recall_status != TaskStatus.NOT_STARTED or
+                self.reply_status != TaskStatus.NOT_STARTED or
+                self.metrics_status != TaskStatus.NOT_STARTED):
                 total += 10.0
-            elif self.norm_status == TaskStatus.CANCELLED:
-                total += 10.0 * (self.norm_progress / 100.0)
-            elif self.norm_status == TaskStatus.NOT_STARTED:
-                # If later tasks are running, assume norm is done
-                if (self.set_status != TaskStatus.NOT_STARTED or
-                    self.recall_status != TaskStatus.NOT_STARTED or
-                    self.reply_status != TaskStatus.NOT_STARTED or
-                    self.metrics_status != TaskStatus.NOT_STARTED):
-                    total += 10.0
-            
-            # Set analysis: 10%
-            if self.set_status == TaskStatus.COMPLETED:
-                total += 10.0
-            elif self.set_status == TaskStatus.IN_PROGRESS:
-                total += 10.0 * (self.set_progress / 100.0)
-            elif self.set_status == TaskStatus.SKIPPED:
-                total += 10.0
-            elif self.set_status == TaskStatus.CANCELLED:
-                total += 10.0 * (self.set_progress / 100.0)
-            elif self.set_status == TaskStatus.NOT_STARTED:
-                # If later tasks are running, assume set is done
-                if (self.recall_status != TaskStatus.NOT_STARTED or
-                    self.reply_status != TaskStatus.NOT_STARTED or
-                    self.metrics_status != TaskStatus.NOT_STARTED):
-                    total += 10.0
-            
-            # Recall analysis: 20%
-            if self.recall_status == TaskStatus.COMPLETED:
+        
+        # Recall analysis: 20%
+        if self.recall_status == TaskStatus.COMPLETED:
+            total += 20.0
+        elif self.recall_status == TaskStatus.IN_PROGRESS:
+            total += 20.0 * (self.recall_progress / 100.0)
+        elif self.recall_status == TaskStatus.SKIPPED:
+            total += 20.0
+        elif self.recall_status == TaskStatus.CANCELLED:
+            total += 20.0 * (self.recall_progress / 100.0)
+        elif self.recall_status == TaskStatus.NOT_STARTED:
+            # If later tasks are running, assume recall is done
+            if (self.reply_status != TaskStatus.NOT_STARTED or
+                self.metrics_status != TaskStatus.NOT_STARTED):
                 total += 20.0
-            elif self.recall_status == TaskStatus.IN_PROGRESS:
-                total += 20.0 * (self.recall_progress / 100.0)
-            elif self.recall_status == TaskStatus.SKIPPED:
+        
+        # Reply analysis: 20%
+        if self.reply_status == TaskStatus.COMPLETED:
+            total += 20.0
+        elif self.reply_status == TaskStatus.IN_PROGRESS:
+            total += 20.0 * (self.reply_progress / 100.0)
+        elif self.reply_status == TaskStatus.SKIPPED:
+            total += 20.0
+        elif self.reply_status == TaskStatus.CANCELLED:
+            total += 20.0 * (self.reply_progress / 100.0)
+        elif self.reply_status == TaskStatus.NOT_STARTED:
+            # If later tasks are running, assume reply is done
+            if self.metrics_status != TaskStatus.NOT_STARTED:
                 total += 20.0
-            elif self.recall_status == TaskStatus.CANCELLED:
-                total += 20.0 * (self.recall_progress / 100.0)
-            elif self.recall_status == TaskStatus.NOT_STARTED:
-                # If later tasks are running, assume recall is done
-                if (self.reply_status != TaskStatus.NOT_STARTED or
-                    self.metrics_status != TaskStatus.NOT_STARTED):
-                    total += 20.0
-            
-            # Reply analysis: 20%
-            if self.reply_status == TaskStatus.COMPLETED:
-                total += 20.0
-            elif self.reply_status == TaskStatus.IN_PROGRESS:
-                total += 20.0 * (self.reply_progress / 100.0)
-            elif self.reply_status == TaskStatus.SKIPPED:
-                total += 20.0
-            elif self.reply_status == TaskStatus.CANCELLED:
-                total += 20.0 * (self.reply_progress / 100.0)
-            elif self.reply_status == TaskStatus.NOT_STARTED:
-                # If later tasks are running, assume reply is done
-                if self.metrics_status != TaskStatus.NOT_STARTED:
-                    total += 20.0
-            
-            # Metrics analysis: 10%
-            if self.metrics_status == TaskStatus.COMPLETED:
-                total += 10.0
-            elif self.metrics_status == TaskStatus.IN_PROGRESS:
-                total += 10.0 * (self.metrics_progress / 100.0)
-            elif self.metrics_status == TaskStatus.SKIPPED:
-                total += 10.0
-            elif self.metrics_status == TaskStatus.CANCELLED:
-                total += 10.0 * (self.metrics_progress / 100.0)
-            
-            return min(100.0, total)
+        
+        # Metrics analysis: 10%
+        if self.metrics_status == TaskStatus.COMPLETED:
+            total += 10.0
+        elif self.metrics_status == TaskStatus.IN_PROGRESS:
+            total += 10.0 * (self.metrics_progress / 100.0)
+        elif self.metrics_status == TaskStatus.SKIPPED:
+            total += 10.0
+        elif self.metrics_status == TaskStatus.CANCELLED:
+            total += 10.0 * (self.metrics_progress / 100.0)
+        
+        return min(100.0, total)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -279,6 +294,7 @@ class TaskState:
                 'files': {
                     'excel_file': self.excel_file,
                     'json_file': self.json_file,
+                    'report_file': self.report_file,
                     'intermediate_file': self.intermediate_file
                 },
                 'error_message': self.error_message,
@@ -294,9 +310,14 @@ task_storage_lock = threading.Lock()
 
 
 def get_task_state(task_id: str) -> Optional[TaskState]:
-    """Get task state by task_id"""
-    with task_storage_lock:
-        return task_storage.get(task_id)
+    """
+    Get task state by task_id
+    
+    Note: Python dict reads are atomic, so we don't need a lock for read-only operations.
+    The lock is only needed for write operations (create_task_state).
+    """
+    # Direct read without lock - Python dict reads are thread-safe
+    return task_storage.get(task_id)
 
 
 def create_task_state(task_id: str) -> TaskState:
@@ -415,8 +436,9 @@ def convert_analysis_results_to_excel_data(
             row_data = {}
             
             # Basic fields from batch processing
+            # Note: Use '用户问题' to match data_analysis_tool output format for metrics analysis compatibility
             row_data['对话ID'] = group.conversation_id if group.conversation_id else ''
-            row_data['问题'] = task.question if task.question else ''
+            row_data['用户问题'] = task.question if task.question else ''
             row_data['参考溯源'] = task.correct_source if task.correct_source else ''
             row_data['参考答案'] = task.correct_answer if task.correct_answer else ''
             
@@ -452,7 +474,11 @@ def convert_analysis_results_to_excel_data(
                 # Set analysis results
                 if analysis_result.set_analysis:
                     row_data['问题是否在集'] = analysis_result.set_analysis.is_in_set if analysis_result.set_analysis.is_in_set is not None else ''
-                    row_data['问题（非）在集类型'] = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
+                    # Convert "out_of_domain" to "集外问题" for consistency
+                    in_out_type = analysis_result.set_analysis.in_out_type if analysis_result.set_analysis.in_out_type else ''
+                    if in_out_type == 'out_of_domain':
+                        in_out_type = '集外问题'
+                    row_data['问题（非）在集类型'] = in_out_type
                     row_data['问题（非）在集理由'] = analysis_result.set_analysis.reason if analysis_result.set_analysis.reason else ''
                 else:
                     row_data['问题是否在集'] = ''
@@ -508,50 +534,140 @@ def convert_analysis_results_to_excel_data(
     return excel_data
 
 
-def update_progress_from_log(task_state: TaskState, task_id: str):
-    """Update progress from log files"""
+async def update_progress_from_log(task_state: TaskState, task_id: str):
+    """
+    Update progress from log files (async version to avoid blocking)
+    
+    All progress reads are executed in parallel to minimize total wait time.
+    """
     try:
-        # Update batch progress
-        batch_progress = get_latest_progress(prefix="spark_api_tool", progress_type="SPARK_API_PROGRESS")
-        if batch_progress:
-            task_state.update_status(
-                batch_progress=batch_progress['percent'],
-                batch_status=TaskStatus.IN_PROGRESS if batch_progress['percent'] < 100 else TaskStatus.COMPLETED
-            )
+        import asyncio
         
-        # Update norm progress
-        norm_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="NORM_ANALYSIS_PROGRESS")
-        if norm_progress:
-            task_state.update_status(
-                norm_progress=norm_progress['percent'],
-                norm_status=TaskStatus.IN_PROGRESS if norm_progress['percent'] < 100 else TaskStatus.COMPLETED
-            )
+        # Use logging configuration from config file
+        # All logs from spark_api_tool and data_analysis_tool are written to the same log file
+        # when called from app.py, so we use the configured log prefix
+        from spark_api_tool.config import config_manager
+        log_dir = config_manager.logging.log_dir
+        log_prefix = config_manager.logging.log_filename_prefix
         
-        # Update set progress
-        set_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="SET_ANALYSIS_PROGRESS")
-        if set_progress:
-            task_state.update_status(
-                set_progress=set_progress['percent'],
-                set_status=TaskStatus.IN_PROGRESS if set_progress['percent'] < 100 else TaskStatus.COMPLETED
-            )
+        # Define all progress update tasks
+        async def get_batch_progress():
+            try:
+                return await asyncio.to_thread(
+                    get_latest_progress,
+                    log_dir=log_dir,
+                    prefix_log_filename=log_prefix,
+                    progress_type="SPARK_API_PROGRESS",
+                    task_id=task_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get batch progress: {e}")
+                return None
         
-        # Update recall progress
-        recall_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="RECALL_ANALYSIS_PROGRESS")
-        if recall_progress:
-            task_state.update_status(
-                recall_progress=recall_progress['percent'],
-                recall_status=TaskStatus.IN_PROGRESS if recall_progress['percent'] < 100 else TaskStatus.COMPLETED
-            )
+        async def get_norm_progress():
+            try:
+                return await asyncio.to_thread(
+                    get_latest_progress,
+                    log_dir=log_dir,
+                    prefix_log_filename=log_prefix,
+                    progress_type="NORM_ANALYSIS_PROGRESS",
+                    task_id=task_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get norm progress: {e}")
+                return None
         
-        # Update reply progress
-        reply_progress = get_latest_progress(prefix="data_analysis_tool", progress_type="REPLY_ANALYSIS_PROGRESS")
-        if reply_progress:
-            task_state.update_status(
-                reply_progress=reply_progress['percent'],
-                reply_status=TaskStatus.IN_PROGRESS if reply_progress['percent'] < 100 else TaskStatus.COMPLETED
+        async def get_set_progress():
+            try:
+                return await asyncio.to_thread(
+                    get_latest_progress,
+                    log_dir=log_dir,
+                    prefix_log_filename=log_prefix,
+                    progress_type="SET_ANALYSIS_PROGRESS",
+                    task_id=task_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get set progress: {e}")
+                return None
+        
+        async def get_recall_progress():
+            try:
+                return await asyncio.to_thread(
+                    get_latest_progress,
+                    log_dir=log_dir,
+                    prefix_log_filename=log_prefix,
+                    progress_type="RECALL_ANALYSIS_PROGRESS",
+                    task_id=task_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get recall progress: {e}")
+                return None
+        
+        async def get_reply_progress():
+            try:
+                return await asyncio.to_thread(
+                    get_latest_progress,
+                    log_dir=log_dir,
+                    prefix_log_filename=log_prefix,
+                    progress_type="REPLY_ANALYSIS_PROGRESS",
+                    task_id=task_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get reply progress: {e}")
+                return None
+        
+        # Execute all progress reads in parallel with a short timeout
+        try:
+            batch_progress, norm_progress, set_progress, recall_progress, reply_progress = await asyncio.wait_for(
+                asyncio.gather(
+                    get_batch_progress(),
+                    get_norm_progress(),
+                    get_set_progress(),
+                    get_recall_progress(),
+                    get_reply_progress(),
+                    return_exceptions=True
+                ),
+                timeout=1.0  # 1 second total timeout for all reads
             )
+            
+            # Collect all updates first, then update in a single call to minimize lock contention
+            updates = {}
+            
+            # Update batch progress
+            if batch_progress and not isinstance(batch_progress, Exception):
+                updates['batch_progress'] = batch_progress['percent']
+                updates['batch_status'] = TaskStatus.IN_PROGRESS if batch_progress['percent'] < 100 else TaskStatus.COMPLETED
+            
+            # Update norm progress
+            if norm_progress and not isinstance(norm_progress, Exception):
+                updates['norm_progress'] = norm_progress['percent']
+                updates['norm_status'] = TaskStatus.IN_PROGRESS if norm_progress['percent'] < 100 else TaskStatus.COMPLETED
+            
+            # Update set progress
+            if set_progress and not isinstance(set_progress, Exception):
+                updates['set_progress'] = set_progress['percent']
+                updates['set_status'] = TaskStatus.IN_PROGRESS if set_progress['percent'] < 100 else TaskStatus.COMPLETED
+            
+            # Update recall progress
+            if recall_progress and not isinstance(recall_progress, Exception):
+                updates['recall_progress'] = recall_progress['percent']
+                updates['recall_status'] = TaskStatus.IN_PROGRESS if recall_progress['percent'] < 100 else TaskStatus.COMPLETED
+            
+            # Update reply progress
+            if reply_progress and not isinstance(reply_progress, Exception):
+                updates['reply_progress'] = reply_progress['percent']
+                updates['reply_status'] = TaskStatus.IN_PROGRESS if reply_progress['percent'] < 100 else TaskStatus.COMPLETED
+            
+            # Update all at once to minimize lock acquisition
+            if updates:
+                task_state.update_status(**updates)
+                
+        except asyncio.TimeoutError:
+            # Timeout is acceptable - just skip progress update from logs
+            logger.debug(f"Timeout reading progress from logs for task {task_id}")
+            
     except Exception as e:
-        logger.warning(f"Failed to update progress from log: {e}")
+        logger.debug(f"Failed to update progress from log: {e}")
 
 
 async def execute_workflow(
@@ -572,12 +688,22 @@ async def execute_workflow(
     Execute the integrated workflow with progress tracking and cancellation support
     """
     try:
+        # Set task_id to logging context so all logs include task_id
+        from conf.logging import task_id_context
+        task_id_context.set(task_state.task_id)
+        logger.info(f"[TASK_START] task_id={task_state.task_id}")
         # Validate required parameters
         if not query_selected:
             raise ValueError("query_selected must be True")
         
         if not file_path or not os.path.exists(file_path):
             raise ValueError(f"Input file not found: {file_path}")
+        
+        # Get project root directory and set output directory to data/ under project root
+        # app.py is in project root, so parent of current_dir is project root
+        project_root = Path(current_dir).absolute()
+        output_dir = project_root / 'data'
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         # Auto-enable problem_analysis if norm_analysis or set_analysis is enabled
         if norm_analysis or set_analysis:
@@ -590,17 +716,17 @@ async def execute_workflow(
             task_state.update_status(batch_status=TaskStatus.CANCELLED)
             return
         
-        logger.info(f"[Task-{task_state.task_id}] Step 1: Reading input file for batch processing...")
+        logger.info(f"[FILE_READ] Reading input file for batch processing: {file_path}")
         batch_handler = BatchExcelHandler(file_path)
         batch_groups = batch_handler.read_data()
         
         if not batch_groups:
             raise ValueError("No conversation groups found in input file")
         
-        logger.info(f"[Task-{task_state.task_id}] Read {len(batch_groups)} conversation groups")
+        logger.info(f"[BATCH_START] Read {len(batch_groups)} conversation groups")
         
         # Perform batch processing
-        logger.info(f"[Task-{task_state.task_id}] Step 2: Starting batch processing (CKB QA)...")
+        logger.info(f"[BATCH_START] Starting batch processing (CKB QA)...")
         
         # Check cancellation during batch processing (periodic check)
         # Note: process_batch is async, so we can't interrupt it easily
@@ -612,17 +738,16 @@ async def execute_workflow(
             return
         
         task_state.update_status(batch_status=TaskStatus.COMPLETED, batch_progress=100.0)
-        logger.info(f"[Task-{task_state.task_id}] Batch processing completed: {len(processed_groups)} groups")
+        logger.info(f"[BATCH_COMPLETE] Batch processing completed: {len(processed_groups)} groups")
         
-        # Update progress from log
-        update_progress_from_log(task_state, task_state.task_id)
+        # Update progress from log (async)
+        await update_progress_from_log(task_state, task_state.task_id)
         
         # Save intermediate batch results
         input_path = Path(file_path)
-        output_dir = input_path.parent / 'data'
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        intermediate_file = str(output_dir / f"{input_path.stem}_batch_result_{timestamp}.xlsx")
+        # Use task_id in filename instead of timestamp
+        # output_dir is already set to project root / data at the beginning of the function
+        intermediate_file = str(output_dir / f"{input_path.stem}_batch_result_{task_state.task_id}.xlsx")
         
         try:
             batch_handler.write_results(processed_groups, intermediate_file)
@@ -698,7 +823,7 @@ async def execute_workflow(
                 return
             
             # Execute analysis
-            logger.info(f"[Task-{task_state.task_id}] Step 3: Starting data analysis...")
+            logger.info(f"[ANALYSIS_START] Starting data analysis...")
             
             # Execute analysis with periodic cancellation check
             # Note: For better cancellation, we would need to modify the analysis tools
@@ -717,8 +842,8 @@ async def execute_workflow(
                 )
                 return
             
-            # Update progress from log
-            update_progress_from_log(task_state, task_state.task_id)
+            # Update progress from log (async)
+            await update_progress_from_log(task_state, task_state.task_id)
             
             # Mark completed analyses
             if norm_analysis:
@@ -730,19 +855,21 @@ async def execute_workflow(
             if reply_analysis:
                 task_state.update_status(reply_status=TaskStatus.COMPLETED, reply_progress=100.0)
             
-            logger.info(f"[Task-{task_state.task_id}] Data analysis completed: {len(analysis_results)} results")
+            logger.info(f"[ANALYSIS_COMPLETE] Data analysis completed: {len(analysis_results)} results")
             
             # Step 3: Save Excel results
-            logger.info(f"[Task-{task_state.task_id}] Step 4: Saving integrated results to Excel...")
+            logger.info(f"[FILE_WRITE] Saving integrated results to Excel...")
             excel_data = convert_analysis_results_to_excel_data(processed_groups, analysis_results, input_file_path=file_path)
             
-            output_file = str(output_dir / f"{input_path.stem}_integrated_result_{timestamp}.xlsx")
+            # Use task_id in filename instead of timestamp
+            output_file = str(output_dir / f"{input_path.stem}_integrated_result_{task_state.task_id}.xlsx")
             
             import pandas as pd
             df = pd.DataFrame(excel_data)
             
             # Define column order
-            base_columns = ['对话ID', '问题', '参考溯源', '参考答案']
+            # Note: Use '用户问题' to match data_analysis_tool output format for metrics analysis compatibility
+            base_columns = ['对话ID', '用户问题', '参考溯源', '参考答案']
             max_sources = 0
             for row in excel_data:
                 for col_name in row.keys():
@@ -770,7 +897,7 @@ async def execute_workflow(
             
             df.to_excel(output_file, index=False, engine='openpyxl')
             task_state.update_status(excel_file=output_file)
-            logger.info(f"[Task-{task_state.task_id}] Results saved to Excel: {output_file}")
+            logger.info(f"[FILE_WRITE] Results saved to Excel: {output_file}")
             
             # Step 4: Metrics Analysis (10% weight)
             if output_file and os.path.exists(output_file):
@@ -780,7 +907,7 @@ async def execute_workflow(
                     task_state.update_status(metrics_status=TaskStatus.CANCELLED)
                     return
                 
-                logger.info(f"[Task-{task_state.task_id}] Step 5: Starting metrics analysis...")
+                logger.info(f"[METRICS_ANALYSIS] Starting metrics analysis...")
                 metrics = analyze_metrics(
                     file_path=output_file,
                     norm_analysis=norm_analysis,
@@ -794,21 +921,40 @@ async def execute_workflow(
                     return
                 
                 if metrics:
-                    metrics_json_file = str(output_dir / f"{input_path.stem}_metrics_{timestamp}.json")
+                    # Save metrics JSON file (metrics_analysis_tool will also save it, but we save here for API access)
+                    # Use task_id in filename
+                    metrics_json_file = str(output_dir / f"{input_path.stem}_metrics_{task_state.task_id}.json")
                     with open(metrics_json_file, 'w', encoding='utf-8') as f:
                         json.dump(metrics, f, indent=2, ensure_ascii=False)
                     
+                    # Generate comprehensive report if available
+                    report_file = None
+                    try:
+                        from metrics_analysis_tool.report_generator import ReportGenerator
+                        logger.info("[REPORT_GENERATION] Generating comprehensive data quality analysis report...")
+                        report_generator = ReportGenerator(metrics)
+                        report_content = report_generator.generate_report()
+                        # Save report to project root / data directory (same as output_file)
+                        # output_file is already in output_dir (project root / data), so save_report will use the correct directory
+                        report_file = report_generator.save_report(report_content, output_file)
+                        logger.info(f"[FILE_WRITE] Comprehensive report saved: {report_file}")
+                    except ImportError as e:
+                        logger.warning(f"[WARNING] Failed to import report generator: {e}, skipping report generation")
+                    except Exception as e:
+                        logger.warning(f"[WARNING] Failed to generate report: {e}, continuing without report")
+                    
                     task_state.update_status(
                         json_file=metrics_json_file,
+                        report_file=report_file,
                         metrics_status=TaskStatus.COMPLETED,
                         metrics_progress=100.0
                     )
-                    logger.info(f"[Task-{task_state.task_id}] Metrics analysis completed: {metrics_json_file}")
+                    logger.info(f"[METRICS_ANALYSIS] Metrics analysis completed: {metrics_json_file}")
                 else:
                     task_state.update_status(metrics_status=TaskStatus.SKIPPED)
         else:
             # No analysis enabled, skip to save batch results only
-            logger.info(f"[Task-{task_state.task_id}] No analysis enabled, skipping data analysis")
+            logger.info(f"[ANALYSIS_SKIP] No analysis enabled, skipping data analysis")
             task_state.update_status(
                 norm_status=TaskStatus.SKIPPED,
                 set_status=TaskStatus.SKIPPED,
@@ -821,13 +967,13 @@ async def execute_workflow(
             output_file = intermediate_file
             task_state.update_status(excel_file=output_file)
         
-        logger.info(f"[Task-{task_state.task_id}] Workflow completed successfully!")
+        logger.info(f"[TASK_COMPLETE] task_id={task_state.task_id} Workflow completed successfully!")
         
     except asyncio.CancelledError:
-        logger.info(f"[Task-{task_state.task_id}] Workflow cancelled")
+        logger.info(f"[TASK_CANCELLED] task_id={task_state.task_id} Workflow cancelled")
         task_state.update_status(error_message="Task cancelled by user")
     except Exception as e:
-        logger.error(f"[Task-{task_state.task_id}] Workflow failed: {e}", exc_info=True)
+        logger.error(f"[ERROR] task_id={task_state.task_id} Workflow failed: {e}", exc_info=True)
         task_state.update_status(error_message=str(e))
 
 
@@ -867,18 +1013,22 @@ class StartRequest(BaseModel):
 
 class StartResponse(BaseModel):
     """Response model for start endpoint"""
-    success: bool
+    code: str
     message: str
+    success: bool
     task_id: str
 
 
 class StatusResponse(BaseModel):
     """Response model for status endpoint"""
+    code: str
+    message: str
+    success: bool
     task_id: str
     total_progress: float
     status: Dict[str, str]
     progress: Dict[str, float]
-    files: Dict[str, Opt[str]]
+    files: Dict[str, Opt[str]]  # Includes excel_file, json_file, report_file, intermediate_file
     error_message: Opt[str] = None
     created_at: str
     updated_at: str
@@ -887,18 +1037,22 @@ class StatusResponse(BaseModel):
 
 class DownloadResponse(BaseModel):
     """Response model for download endpoint"""
-    success: bool
+    code: str
     message: str
+    success: bool
     excel_file: Opt[str] = None
     json_file: Opt[str] = None
+    report_file: Opt[str] = None
 
 
 class InterruptResponse(BaseModel):
     """Response model for interrupt endpoint"""
-    success: bool
+    code: str
     message: str
+    success: bool
     excel_file: Opt[str] = None
     json_file: Opt[str] = None
+    report_file: Opt[str] = None
     intermediate_file: Opt[str] = None
 
 
@@ -947,16 +1101,22 @@ async def start_task(request: StartRequest, background_tasks: BackgroundTasks):
         # Check if task_id already exists
         existing_task = get_task_state(request.task_id)
         if existing_task:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Task {request.task_id} already exists"
+            code, message = get_error_response(ErrorCode.SYSTEM_EXCEPTION, f"Task {request.task_id} already exists")
+            return StartResponse(
+                code=code,
+                message=message,
+                success=False,
+                task_id=request.task_id
             )
         
         # Validate file path
         if not os.path.exists(request.file_path):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Input file not found: {request.file_path}"
+            code, message = get_error_response(ErrorCode.FILE_NOT_FOUND, request.file_path)
+            return StartResponse(
+                code=code,
+                message=message,
+                success=False,
+                task_id=request.task_id
             )
         
         # Create task state
@@ -975,25 +1135,27 @@ async def start_task(request: StartRequest, background_tasks: BackgroundTasks):
             set_analysis=request.set_analysis,
             recall_analysis=request.recall_analysis,
             reply_analysis=request.reply_analysis,
-            scene_config_file=request.scene_config_file or r"data\scene_config.xlsx",
+            scene_config_file=request.scene_config_file,
             parallel_execution=request.parallel_execution
         )
         
-        logger.info(f"Task {request.task_id} started")
-        
+        logger.info(f"[TASK_START] Task {request.task_id} started")
+        code, message = get_success_response()
         return StartResponse(
-            success=True,
+            code=code,
             message=f"Task {request.task_id} started successfully",
+            success=True,
             task_id=request.task_id
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Failed to start task: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to start task: {str(e)}"
+        logger.error(f"[ERROR] Failed to start task: {e}", exc_info=True)
+        code, message = get_error_response(ErrorCode.SYSTEM_EXCEPTION, str(e))
+        return StartResponse(
+            code=code,
+            message=message,
+            success=False,
+            task_id=request.task_id if 'request' in locals() else ""
         )
 
 
@@ -1011,18 +1173,49 @@ async def get_status(task_id: str):
     task_state = get_task_state(task_id)
     
     if not task_state:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found"
+        code, message = get_error_response(ErrorCode.SYSTEM_EXCEPTION, f"Task {task_id} not found")
+        return StatusResponse(
+            code=code,
+            message=message,
+            success=False,
+            task_id=task_id,
+            total_progress=0.0,
+            status={},
+            progress={},
+            files={},
+            error_message=None,
+            created_at="",
+            updated_at="",
+            cancelled=False
         )
     
-    # Update progress from logs
-    update_progress_from_log(task_state, task_id)
+    # Try to update progress from logs first (with timeout to avoid blocking)
+    # This ensures we return the most up-to-date status information
+    import asyncio
+    try:
+        # Wait for progress update with a short timeout (500ms)
+        # If it completes quickly, we get fresh data; if it times out, we use current state
+        await asyncio.wait_for(
+            update_progress_from_log(task_state, task_id),
+            timeout=0.5
+        )
+    except asyncio.TimeoutError:
+        # Timeout is acceptable - continue with current state
+        logger.debug(f"Progress update timeout for task {task_id}, using current state")
+    except Exception as e:
+        # Any other error is acceptable - continue with current state
+        logger.debug(f"Progress update failed for task {task_id}: {e}, using current state")
     
-    # Convert to response
+    # Get the (potentially updated) state after attempting to refresh
     state_dict = task_state.to_dict()
+    code, message = get_success_response()
     
-    return StatusResponse(**state_dict)
+    return StatusResponse(
+        code=code,
+        message=message,
+        success=True,
+        **state_dict
+    )
 
 
 @app.get("/download/{task_id}", response_model=DownloadResponse)
@@ -1039,33 +1232,43 @@ async def download_files(task_id: str):
     task_state = get_task_state(task_id)
     
     if not task_state:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found"
+        code, message = get_error_response(ErrorCode.SYSTEM_EXCEPTION, f"Task {task_id} not found")
+        return DownloadResponse(
+            code=code,
+            message=message,
+            success=False
         )
     
     # Check if files are ready
     if not task_state.excel_file:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task {task_id} has not generated output files yet"
+        code, message = get_error_response(ErrorCode.FILE_NOT_FOUND, f"Task {task_id} has not generated output files yet")
+        return DownloadResponse(
+            code=code,
+            message=message,
+            success=False
         )
     
     # Check if files exist
     excel_exists = task_state.excel_file and os.path.exists(task_state.excel_file)
     json_exists = task_state.json_file and os.path.exists(task_state.json_file)
+    report_exists = task_state.report_file and os.path.exists(task_state.report_file)
     
     if not excel_exists:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Excel file not found for task {task_id}"
+        code, message = get_error_response(ErrorCode.FILE_NOT_FOUND, f"Excel file not found for task {task_id}")
+        return DownloadResponse(
+            code=code,
+            message=message,
+            success=False
         )
     
+    code, message = get_success_response()
     return DownloadResponse(
-        success=True,
+        code=code,
         message=f"Files ready for task {task_id}",
+        success=True,
         excel_file=task_state.excel_file,
-        json_file=task_state.json_file if json_exists else None
+        json_file=task_state.json_file if json_exists else None,
+        report_file=task_state.report_file if report_exists else None
     )
 
 
@@ -1083,44 +1286,57 @@ async def interrupt_task(task_id: str):
     task_state = get_task_state(task_id)
     
     if not task_state:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found"
+        code, message = get_error_response(ErrorCode.SYSTEM_EXCEPTION, f"Task {task_id} not found")
+        return InterruptResponse(
+            code=code,
+            message=message,
+            success=False
         )
     
     if task_state.is_cancelled():
+        code, message = get_success_response()
         return InterruptResponse(
-            success=True,
+            code=code,
             message=f"Task {task_id} was already cancelled",
+            success=True,
             excel_file=task_state.excel_file,
             json_file=task_state.json_file,
+            report_file=task_state.report_file,
             intermediate_file=task_state.intermediate_file
         )
     
     # Cancel the task
     task_state.cancel()
     
-    # Update all in-progress statuses to cancelled
+    # Collect all status updates and update in a single call to minimize lock contention
+    updates = {}
     if task_state.batch_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(batch_status=TaskStatus.CANCELLED)
+        updates['batch_status'] = TaskStatus.CANCELLED
     if task_state.norm_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(norm_status=TaskStatus.CANCELLED)
+        updates['norm_status'] = TaskStatus.CANCELLED
     if task_state.set_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(set_status=TaskStatus.CANCELLED)
+        updates['set_status'] = TaskStatus.CANCELLED
     if task_state.recall_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(recall_status=TaskStatus.CANCELLED)
+        updates['recall_status'] = TaskStatus.CANCELLED
     if task_state.reply_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(reply_status=TaskStatus.CANCELLED)
+        updates['reply_status'] = TaskStatus.CANCELLED
     if task_state.metrics_status == TaskStatus.IN_PROGRESS:
-        task_state.update_status(metrics_status=TaskStatus.CANCELLED)
+        updates['metrics_status'] = TaskStatus.CANCELLED
     
-    logger.info(f"Task {task_id} interrupted")
+    # Update all at once to minimize lock acquisition
+    if updates:
+        task_state.update_status(**updates)
+    
+    logger.info(f"[TASK_CANCELLED] Task {task_id} interrupted")
+    code, message = get_success_response()
     
     return InterruptResponse(
-        success=True,
+        code=code,
         message=f"Task {task_id} interrupted successfully",
+        success=True,
         excel_file=task_state.excel_file if task_state.excel_file and os.path.exists(task_state.excel_file) else None,
         json_file=task_state.json_file if task_state.json_file and os.path.exists(task_state.json_file) else None,
+        report_file=task_state.report_file if task_state.report_file and os.path.exists(task_state.report_file) else None,
         intermediate_file=task_state.intermediate_file if task_state.intermediate_file and os.path.exists(task_state.intermediate_file) else None
     )
 

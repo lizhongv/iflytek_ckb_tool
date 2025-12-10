@@ -13,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def find_latest_log_file(log_dir: str = "log", prefix: str = "spark_api_tool") -> Optional[str]:
+def find_latest_log_file(log_dir: str = "logs", prefix: str = "spark_api_tool") -> Optional[str]:
     """
     Find the latest log file
     
@@ -94,13 +94,15 @@ def parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_latest_progress(log_dir: str = "log", prefix: str = "spark_api_tool",
-                       progress_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_latest_progress(log_dir: str = "logs", prefix_log_filename: str = "spark_api_tool",
+                       progress_type: Optional[str] = None,
+                       task_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get the latest processing progress from the latest log file
     
     The function reads from the end of the file backwards to find the most recent
     progress entry. If progress_type is specified, only returns progress of that type.
+    If task_id is specified, only returns progress for that specific task.
     Otherwise, returns the latest progress of any supported type.
     
     Supported progress types:
@@ -115,6 +117,8 @@ def get_latest_progress(log_dir: str = "log", prefix: str = "spark_api_tool",
         log_dir: Log directory path
         prefix: Log file prefix
         progress_type: Optional progress type to filter. If None, returns latest progress of any type.
+        task_id: Optional task ID to filter. If specified, only returns progress for this task.
+                 If None, returns progress for any task (may return progress from different tasks).
         
     Returns:
         Latest progress information dictionary, or None if not found
@@ -160,6 +164,12 @@ def get_latest_progress(log_dir: str = "log", prefix: str = "spark_api_tool",
                         if progress.get('progress_type') != progress_type:
                             continue
                     
+                    # Filter by task_id if specified
+                    if task_id is not None:
+                        progress_task_id = progress.get('task_id')
+                        if progress_task_id != task_id:
+                            continue
+                    
                     timestamp_match = re.search(r'\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]', line)
                     progress['log_file'] = log_file
                     progress['timestamp'] = timestamp_match.group(1) if timestamp_match else None
@@ -177,7 +187,7 @@ if __name__ == "__main__":
     
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(message)s',
+        format='[%(asctime)s] [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -189,17 +199,27 @@ if __name__ == "__main__":
                                'REPLY_ANALYSIS_PROGRESS', 'RECALL_ANALYSIS_PROGRESS',
                                'NORM_ANALYSIS_PROGRESS', 'SET_ANALYSIS_PROGRESS'],
                        help='Filter by specific progress type (optional)')
+    parser.add_argument('--task-id', type=str, default=None,
+                       help='Filter by specific task ID (optional)')
+    parser.add_argument('--log-dir', type=str, default='logs',
+                       help='Log directory path (default: logs)')
     args = parser.parse_args()
-
+    
+    # TODO: To test the log parser
     # args.progress_type = "RECALL_ANALYSIS_PROGRESS"
     # args.progress_type = "REPLY_ANALYSIS_PROGRESS"
     # args.progress_type = "DATA_ANALYSIS_PROGRESS"
-    args.progress_type = "NORM_ANALYSIS_PROGRESS"
+    # args.progress_type = "NORM_ANALYSIS_PROGRESS"
     # args.progress_type = "SET_ANALYSIS_PROGRESS"
-    args.task_id = "491cf155-3a65-44"
-    args.prefix = "data_analysis_tool"
+    # args.task_id = "491cf155-3a65-44"
+    # args.prefix = "data_analysis_tool"
     
-    progress = get_latest_progress(prefix=args.prefix, progress_type=args.progress_type)
+    progress = get_latest_progress(
+        log_dir=args.log_dir,
+        prefix_log_filename=args.prefix_log_filename, 
+        progress_type=args.progress_type,
+        task_id=args.task_id
+    )
     
     if progress:
         logger.info(f"Latest progress: {progress['raw']}")

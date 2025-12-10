@@ -26,7 +26,7 @@ if __name__ == "__main__":
         file_level="DEBUG",
         root_level="DEBUG",
         use_timestamp=False,
-        log_filename_prefix="sdata_analysis_tool",
+        log_filename_prefix="data_analysis_tool",
         enable_dual_file_logging=True,
         root_log_filename_prefix="root",
         root_log_level="INFO"

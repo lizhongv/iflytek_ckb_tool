@@ -661,50 +661,50 @@ Examples:
         task_id = "491cf155-3a65-44"
         task_id_context.set(task_id)
         logger.info(f"[TASK_START] task_id={task_id}")
-        
-        file_path = args.file_path
-        
-        if not file_path:
+
+    file_path = args.file_path
+    
+    if not file_path:
             logger.error("[ERROR] File path is required")
-            print("Error: File path is required")
-            parser.print_help()
-            return
-        
-        if not os.path.exists(file_path):
+        print("Error: File path is required")
+        parser.print_help()
+        return
+    
+    if not os.path.exists(file_path):
             logger.error(f"[ERROR] File not found: {file_path}")
-            print(f"Error: File not found: {file_path}")
-            return
-        
-        # Determine which analyses to enable
-        # If --all is set or no specific flags are set, enable all
-        enable_all = args.all or not any([
-            args.norm_analysis, args.set_analysis, 
-            args.recall_analysis, args.reply_analysis
-        ])
-        
-        norm_analysis = enable_all or args.norm_analysis
-        set_analysis = enable_all or args.set_analysis
-        recall_analysis = enable_all or args.recall_analysis
-        reply_analysis = enable_all or args.reply_analysis
-        
-        # Log enabled analyses
-        enabled_analyses = []
-        if norm_analysis:
-            enabled_analyses.append("norm_analysis")
-        if set_analysis:
-            enabled_analyses.append("set_analysis")
-        if recall_analysis:
-            enabled_analyses.append("recall_analysis")
-        if reply_analysis:
-            enabled_analyses.append("reply_analysis")
-        
+        print(f"Error: File not found: {file_path}")
+        return
+    
+    # Determine which analyses to enable
+    # If --all is set or no specific flags are set, enable all
+    enable_all = args.all or not any([
+        args.norm_analysis, args.set_analysis, 
+        args.recall_analysis, args.reply_analysis
+    ])
+    
+    norm_analysis = enable_all or args.norm_analysis
+    set_analysis = enable_all or args.set_analysis
+    recall_analysis = enable_all or args.recall_analysis
+    reply_analysis = enable_all or args.reply_analysis
+    
+    # Log enabled analyses
+    enabled_analyses = []
+    if norm_analysis:
+        enabled_analyses.append("norm_analysis")
+    if set_analysis:
+        enabled_analyses.append("set_analysis")
+    if recall_analysis:
+        enabled_analyses.append("recall_analysis")
+    if reply_analysis:
+        enabled_analyses.append("reply_analysis")
+    
         logger.info(f"[ANALYSIS_CONFIG] Enabled analyses: {enabled_analyses if enabled_analyses else 'none'}")
-        
-        if not enabled_analyses:
+    
+    if not enabled_analyses:
             logger.warning("[WARNING] No analyses enabled, no metrics will be calculated")
-            print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
-            return
-        
+        print("Warning: No analyses enabled. Use --norm-analysis, --set-analysis, --recall-analysis, --reply-analysis, or --all")
+        return
+    
         # Analyze metrics
         logger.info(f"[ANALYSIS_START] Starting metrics analysis for file: {file_path}")
         metrics = analyze_metrics(

@@ -85,6 +85,14 @@ class ErrorCode(Enum):
     ANALYSIS_MISSING_FIELDS = ("7008", "Missing required fields for analysis")
     ANALYSIS_TASK_FAILED = ("7009", "Analysis task execution failed")
     
+    # Metrics analysis errors (8xxx)
+    METRICS_ANALYSIS_FAILED = ("8001", "Metrics analysis failed")
+    METRICS_FILE_NOT_FOUND = ("8002", "Metrics analysis input file not found")
+    METRICS_FILE_READ_ERROR = ("8003", "Failed to read metrics analysis input file")
+    METRICS_SAVE_ERROR = ("8004", "Failed to save metrics results")
+    METRICS_REPORT_GENERATION_FAILED = ("8005", "Failed to generate quality analysis report")
+    METRICS_NO_DATA = ("8006", "No data available for metrics analysis")
+    
     # System errors (9xxx)
     SYSTEM_EXCEPTION = ("9001", "System exception occurred")
     SYSTEM_TIMEOUT = ("9002", "Operation timeout")

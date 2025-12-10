@@ -88,6 +88,20 @@ class LLMConfig:
     base_url: str = "https://api.deepseek.com"
 
 
+@dataclass
+class LoggingConfig:
+    """Logging configuration"""
+    log_dir: str = "logs"
+    console_level: str = "INFO"
+    file_level: str = "DEBUG"
+    root_level: str = "DEBUG"
+    root_log_level: str = "INFO"
+    log_filename_prefix: str = "ckb_qa_tool_api"
+    root_log_filename_prefix: str = "root"
+    use_timestamp: bool = False
+    enable_dual_file_logging: bool = True
+
+
 class ConfigManager:
     """Unified configuration manager"""
     
@@ -204,6 +218,20 @@ class ConfigManager:
                 api_key=llm_data.get("api_key", ""),
                 model=llm_data.get("model", "deepseek-chat"),
                 base_url=llm_data.get("base_url", "https://api.deepseek.com")
+            )
+            
+            # Load logging configuration
+            logging_data = config.get("logging", {})
+            self.logging = LoggingConfig(
+                log_dir=logging_data.get("log_dir", "logs"),
+                console_level=logging_data.get("console_level", "INFO"),
+                file_level=logging_data.get("file_level", "DEBUG"),
+                root_level=logging_data.get("root_level", "DEBUG"),
+                root_log_level=logging_data.get("root_log_level", "INFO"),
+                log_filename_prefix=logging_data.get("log_filename_prefix", "ckb_qa_tool_api"),
+                root_log_filename_prefix=logging_data.get("root_log_filename_prefix", "root"),
+                use_timestamp=logging_data.get("use_timestamp", False),
+                enable_dual_file_logging=logging_data.get("enable_dual_file_logging", True)
             )
             
         except Exception as e:
