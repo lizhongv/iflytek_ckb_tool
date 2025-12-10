@@ -130,6 +130,8 @@ class TaskState:
         """Update task status"""
         with self.lock:
             self.updated_at = datetime.now()
+
+            # Update status 
             if 'batch_status' in kwargs:
                 self.batch_status = kwargs['batch_status']
             if 'norm_status' in kwargs:
@@ -142,7 +144,8 @@ class TaskState:
                 self.reply_status = kwargs['reply_status']
             if 'metrics_status' in kwargs:
                 self.metrics_status = kwargs['metrics_status']
-            
+
+            # Update progress
             if 'batch_progress' in kwargs:
                 self.batch_progress = kwargs['batch_progress']
             if 'norm_progress' in kwargs:
@@ -156,6 +159,7 @@ class TaskState:
             if 'metrics_progress' in kwargs:
                 self.metrics_progress = kwargs['metrics_progress']
             
+            # Update file paths
             if 'excel_file' in kwargs:
                 self.excel_file = kwargs['excel_file']
             if 'json_file' in kwargs:
@@ -164,6 +168,8 @@ class TaskState:
                 self.report_file = kwargs['report_file']
             if 'intermediate_file' in kwargs:
                 self.intermediate_file = kwargs['intermediate_file']
+
+            # Update error message
             if 'error_message' in kwargs:
                 self.error_message = kwargs['error_message']
     
@@ -706,6 +712,7 @@ async def execute_workflow(
         from conf.logging import task_id_context
         task_id_context.set(task_state.task_id)
         logger.info(f"[TASK_START] task_id={task_state.task_id}")
+        
         # Validate required parameters
         if not query_selected:
             raise ValueError("query_selected must be True")
