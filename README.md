@@ -1,5 +1,22 @@
 
 ## 配置环境
+
+### 方法 1：使用 Docker（推荐）
+
+使用 Docker 可以避免 Python 版本和 SSL 模块的问题，推荐使用：
+
+```bash
+# 快速启动
+./docker-run.sh start
+
+# 或使用 Docker Compose
+docker-compose up -d
+
+# 详细说明请参考 DOCKER_GUIDE.md
+```
+
+### 方法 2：本地安装
+
 ```bash
 pip install uv
 uv sync
@@ -8,6 +25,8 @@ uv sync
 # .venv\Scripts\activate
 # deactivate
 ```
+
+**注意**：项目要求 Python >=3.12。如果本地 Python 版本较低或缺少 SSL 支持，建议使用 Docker 方案。
 
 ## 启动 APP
 

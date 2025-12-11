@@ -3,8 +3,8 @@
 本文档提供所有 API 接口的调用命令示例，包括 curl 和 Python requests 两种方式。
 
 **基础信息：**
-- 服务地址：`http://localhost:8000`
-- 默认端口：`8000`
+- 服务地址：`http://localhost:8010`
+- 默认端口：`8010`
 
 ---
 
@@ -16,14 +16,14 @@
 
 **curl 命令：**
 ```bash
-curl -X GET "http://localhost:8000/"
+curl -X GET "http://localhost:8010/"
 ```
 
 **Python requests：**
 ```python
 import requests
 
-response = requests.get("http://localhost:8000/")
+response = requests.get("http://localhost:8010/")
 print(response.json())
 ```
 
@@ -52,14 +52,14 @@ print(response.json())
 
 **curl 命令：**
 ```bash
-curl -X GET "http://localhost:8000/health"
+curl -X GET "http://localhost:8010/health"
 ```
 
 **Python requests：**
 ```python
 import requests
 
-response = requests.get("http://localhost:8000/health")
+response = requests.get("http://localhost:8010/health")
 print(response.json())
 ```
 
@@ -81,7 +81,7 @@ print(response.json())
 
 **curl 命令：**
 ```bash
-curl -X POST "http://localhost:8000/start" \
+curl -X POST "http://localhost:8010/start" \
   -H "Content-Type: application/json" \
   -d '{
     "task_id": "task-12345",
@@ -103,7 +103,7 @@ curl -X POST "http://localhost:8000/start" \
 ```python
 import requests
 
-url = "http://localhost:8000/start"
+url = "http://localhost:8010/start"
 payload = {
     "task_id": "task-12345",
     "file_path": "data/input.xlsx",
@@ -167,7 +167,7 @@ print(response.json())
 
 **curl 命令：**
 ```bash
-curl -X GET "http://localhost:8000/status/task-12345"
+curl -X GET "http://localhost:8010/status/task-12345"
 ```
 
 **Python requests：**
@@ -175,7 +175,7 @@ curl -X GET "http://localhost:8000/status/task-12345"
 import requests
 
 task_id = "task-12345"
-response = requests.get(f"http://localhost:8000/status/{task_id}")
+response = requests.get(f"http://localhost:8010/status/{task_id}")
 print(response.json())
 ```
 
@@ -234,7 +234,7 @@ print(response.json())
 
 **curl 命令：**
 ```bash
-curl -X GET "http://localhost:8000/download/task-12345"
+curl -X GET "http://localhost:8010/download/task-12345"
 ```
 
 **Python requests：**
@@ -242,7 +242,7 @@ curl -X GET "http://localhost:8000/download/task-12345"
 import requests
 
 task_id = "task-12345"
-response = requests.get(f"http://localhost:8000/download/{task_id}")
+response = requests.get(f"http://localhost:8010/download/{task_id}")
 print(response.json())
 ```
 
@@ -282,7 +282,7 @@ print(response.json())
 
 **curl 命令：**
 ```bash
-curl -X POST "http://localhost:8000/interrupt/task-12345"
+curl -X POST "http://localhost:8010/interrupt/task-12345"
 ```
 
 **Python requests：**
@@ -290,7 +290,7 @@ curl -X POST "http://localhost:8000/interrupt/task-12345"
 import requests
 
 task_id = "task-12345"
-response = requests.post(f"http://localhost:8000/interrupt/{task_id}")
+response = requests.post(f"http://localhost:8010/interrupt/{task_id}")
 print(response.json())
 ```
 
@@ -334,7 +334,7 @@ import time
 import json
 
 # 配置
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8010"
 TASK_ID = "task-12345"
 INPUT_FILE = "data/input.xlsx"
 
@@ -409,7 +409,7 @@ else:
 ```bash
 #!/bin/bash
 
-BASE_URL="http://localhost:8000"
+BASE_URL="http://localhost:8010"
 TASK_ID="task-12345"
 INPUT_FILE="data/input.xlsx"
 

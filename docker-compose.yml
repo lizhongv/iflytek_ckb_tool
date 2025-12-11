@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  ckb-qa-tool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ckb-qa-tool
+    image: ckb-qa-tool:latest
+    ports:
+      - "8010:8010"
+    volumes:
+      # 挂载数据目录（输入输出文件）
+      - ./data:/app/data
+      # 挂载日志目录
+      - ./logs:/app/logs
+      # 挂载配置文件（如果需要修改配置）
+      - ./batch_config.yaml:/app/batch_config.yaml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    # 如果需要 GPU 支持，取消下面的注释
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - ckb-network
+
+networks:
+  ckb-network:
+    driver: bridge
+
+
+
+

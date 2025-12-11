@@ -1,0 +1,43 @@
+# ============================================================================
+# 基于通用基础镜像构建应用镜像的示例
+# 使用方法：
+#   1. 构建基础镜像：docker build -f Dockerfile.base -t python-base:3.12 .
+#   2. 修改此文件，复制你的应用代码
+#   3. 构建应用镜像：docker build -f Dockerfile.app.example -t my-app:latest .
+# ============================================================================
+
+# 使用基础镜像（需要先构建基础镜像）
+FROM python-base:3.12
+
+# 或者直接从 Dockerfile.base 构建（多阶段构建）
+# FROM python:3.12-alpine AS base
+# ... (复制 Dockerfile.base 的内容)
+
+# 复制应用特定的依赖（如果有）
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    -r /tmp/requirements.txt || true
+
+# 复制应用代码
+COPY . /app/
+
+# 设置工作目录
+WORKDIR /app
+
+# 暴露应用端口（根据需要修改）
+EXPOSE 8010
+
+# 设置启动命令（根据需要修改）
+CMD ["gunicorn", "app:app", \
+    "-w", "4", \
+    "-k", "uvicorn.workers.UvicornWorker", \
+    "--bind", "0.0.0.0:8010", \
+    "--timeout", "300", \
+    "--access-logfile", "-", \
+    "--error-logfile", "-", \
+    "--log-level", "info", \
+    "--capture-output"]
+
+

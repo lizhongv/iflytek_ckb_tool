@@ -1,0 +1,66 @@
+# ============================================================================
+# 通用 Python 基础镜像
+# 包含常用 Python 包和工具，可用于运行各种 Python 应用
+# ============================================================================
+FROM python:3.12-alpine
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app
+
+# 先复制依赖文件
+COPY requirements.base.txt /tmp/requirements.base.txt
+
+# 安装系统依赖（构建时）
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    libffi-dev \
+    openssl-dev \
+    python3-dev \
+    make \
+    && \
+    # 安装运行时依赖
+    apk add --no-cache \
+    bash \
+    curl \
+    git \
+    libffi \
+    openssl \
+    && \
+    # 安装 Python 基础依赖
+    pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    -r /tmp/requirements.base.txt \
+    && \
+    # 删除构建依赖
+    apk del .build-deps \
+    && \
+    # 清理临时文件
+    rm -f /tmp/requirements.base.txt
+
+# 设置工作目录
+WORKDIR /app
+
+# 创建常用目录
+RUN mkdir -p /app/logs /app/data /app/config
+
+# 复制通用启动脚本
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# 暴露常用端口（可根据需要映射）
+EXPOSE 8000 8010 8080 8888 5000
+
+# 设置入口点
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# 默认命令（可以被覆盖）
+CMD ["python", "--version"]
+
