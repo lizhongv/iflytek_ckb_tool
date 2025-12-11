@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
-# Context variable for task_id (works with asyncio)
+# FIXME Context variable for task_id (works with asyncio)
 task_id_context: ContextVar[str] = ContextVar('task_id', default='')
 
 # Get project root directory for relative path calculation
@@ -44,14 +44,17 @@ def get_relative_path(pathname: str) -> str:
 
 
 def setup_root_logging(
-    log_dir: str = "log",
+    # 基础配置组
+    log_dir: str = "logs",
+    file_log_prefix: str = "app",
+    use_timestamp: bool = False,
+    # 日志级别配置组（按层级顺序：全局 -> 控制台 -> 文件）
+    root_level: str = "DEBUG",  # 全局最低门槛，决定日志记录是否被创建 (通常为 DEBUG)
     console_level: str = "INFO",
     file_level: str = "DEBUG",
-    root_level: str = "DEBUG",
-    use_timestamp: bool = False,
-    log_filename_prefix: str = "app",
+    # 双文件日志配置组
     enable_dual_file_logging: bool = False,
-    root_log_filename_prefix: str = "root",
+    root_log_prefix: str = "root",
     root_log_level: str = "INFO"
 ) -> None:
     """
@@ -62,27 +65,67 @@ def setup_root_logging(
     with consistent formatting and file handling.
     
     Args:
+        # 基础配置
         log_dir: Directory for log files
-        console_level: Console handler log level (INFO, DEBUG, WARNING, ERROR)
-        file_level: File handler log level (usually DEBUG to capture all logs)
-        root_level: Root logger level (usually DEBUG)
+        file_log_prefix: Prefix for log filename (e.g., "app" -> "app.log")
         use_timestamp: Whether to use timestamp in log filename
-        log_filename_prefix: Prefix for log filename
+        
+        # 日志级别配置（两级过滤机制）
+        root_level: Root logger level - 全局最低门槛，决定日志记录是否被创建 (通常为 DEBUG)
+        console_level: Console handler log level - 控制台输出级别 (通常为 INFO)
+        file_level: File handler log level - 文件日志级别 (通常为 DEBUG 以记录所有日志)
+        
+        # 双文件日志配置
         enable_dual_file_logging: If True, create two log files: root.log (INFO) and detailed log (DEBUG)
-        root_log_filename: Filename for root log file (when enable_dual_file_logging=True)
-        root_log_level: Log level for root log file (when enable_dual_file_logging=True)
+        root_log_prefix: Prefix for root log file (e.g., "root" -> "root.log")
+        root_log_level: Log level for root log file when enable_dual_file_logging=True (通常为 INFO)
+        
+    Note:
+        日志级别过滤顺序：
+        1. root_level (Logger级别): 全局最低门槛，低于此级别的日志不会被创建
+        2. handler_level (Handler级别): 每个handler独立过滤（console_level, file_level, root_log_level）
+        
+        最终输出 = 同时通过 root_level 和 handler_level 两个检查的日志
+        
+        推荐配置：
+        - root_level="DEBUG": 允许所有级别通过
+        - console_level="INFO": 控制台只显示INFO及以上
+        - file_level="DEBUG": 文件记录所有日志
+        - root_log_level="INFO": root.log只记录INFO及以上（当启用双文件日志时）
     """
+    # 验证日志级别设置的合理性
+    log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if root_level not in log_levels:
+        raise ValueError(f"Invalid root_level: {root_level}. Must be one of {log_levels}")
+    if console_level not in log_levels:
+        raise ValueError(f"Invalid console_level: {console_level}. Must be one of {log_levels}")
+    if file_level not in log_levels:
+        raise ValueError(f"Invalid file_level: {file_level}. Must be one of {log_levels}")
+    if root_log_level not in log_levels:
+        raise ValueError(f"Invalid root_log_level: {root_log_level}. Must be one of {log_levels}")
+    
+    # 警告：如果 root_level 设置为比 file_level 更高的级别，file_level 的设置将无效
+    # 例如：root_level="INFO", file_level="DEBUG" 时，DEBUG日志在root_level就被过滤，无法写入文件
+    level_priority = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+    if level_priority[root_level] > level_priority[file_level]:
+        import warnings
+        warnings.warn(
+            f"root_level ({root_level}) is higher than file_level ({file_level}). "
+            f"DEBUG logs will be filtered at root_level and won't be written to file.",
+            UserWarning
+        )
+    
     # Ensure log directory exists
     os.makedirs(log_dir, exist_ok=True)
     
     # Generate log filename
     if use_timestamp:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_filename = os.path.join(log_dir, f"{log_filename_prefix}_{timestamp}.log")
+        log_filename = os.path.join(log_dir, f"{file_log_prefix}_{timestamp}.log")
         root_log_path = os.path.join(log_dir, f"root_{timestamp}.log") if enable_dual_file_logging else None
     else:
-        log_filename = os.path.join(log_dir, f"{log_filename_prefix}.log")
-        root_log_path = os.path.join(log_dir, f"{root_log_filename_prefix}.log") if enable_dual_file_logging else None
+        log_filename = os.path.join(log_dir, f"{file_log_prefix}.log")
+        root_log_path = os.path.join(log_dir, f"{root_log_prefix}.log") if enable_dual_file_logging else None
     
     # Custom filter to add task_id to log records
     class TaskIdFilter(logging.Filter):

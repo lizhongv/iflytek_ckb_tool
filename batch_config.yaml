@@ -24,7 +24,6 @@ server:
 effect:
   qa_model: "Spark13B"                # 问答模型名称
   embed_model: "xhdmx1"               # 嵌入模型名称
-
   # 知识检索相关配置
   embeddingTop: 5                     # 嵌入检索数量
   esTop: 2                          # ES检索数量
@@ -97,8 +96,8 @@ logging:
   root_log_level: "INFO"              # 根日志文件级别（当启用双文件日志时）
   
   # 日志文件配置
-  log_filename_prefix: "ckb_tool_api"  # 主日志文件前缀（生成 ckb_qa_tool_api.log）
-  root_log_filename_prefix: "root"    # 根日志文件前缀（生成 root.log）
+  file_log_prefix: "ckb_tool_api"  # 主日志文件前缀（生成 ckb_qa_tool_api.log）
+  root_log_prefix: "root"    # 根日志文件前缀（生成 root.log）
   use_timestamp: false                # 是否在日志文件名中使用时间戳
   
   # 双文件日志配置

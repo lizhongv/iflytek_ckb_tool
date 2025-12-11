@@ -31,9 +31,9 @@ setup_root_logging(
     file_level=config_manager.logging.file_level,
     root_level=config_manager.logging.root_level,
     use_timestamp=config_manager.logging.use_timestamp,
-    log_filename_prefix=config_manager.logging.log_filename_prefix,
+    file_log_prefix=config_manager.logging.file_log_prefix,
     enable_dual_file_logging=config_manager.logging.enable_dual_file_logging,
-    root_log_filename_prefix=config_manager.logging.root_log_filename_prefix,
+    root_log_prefix=config_manager.logging.root_log_prefix,
     root_log_level=config_manager.logging.root_log_level
 )
 
@@ -554,7 +554,7 @@ async def update_progress_from_log(task_state: TaskState, task_id: str):
         # when called from app.py, so we use the configured log prefix
         from spark_api_tool.config import config_manager
         log_dir = config_manager.logging.log_dir
-        log_prefix = config_manager.logging.log_filename_prefix
+        log_prefix = config_manager.logging.file_log_prefix
         
         # Define all progress update tasks
         async def get_batch_progress():

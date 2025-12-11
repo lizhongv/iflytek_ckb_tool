@@ -36,9 +36,9 @@ if __name__ == "__main__":
         file_level=logging_config.file_level,
         root_level=logging_config.root_level,
         use_timestamp=logging_config.use_timestamp,
-        log_filename_prefix="data_analysis_tool",  # Tool-specific prefix
+        file_log_prefix="data_analysis_tool",  # Tool-specific prefix
         enable_dual_file_logging=logging_config.enable_dual_file_logging,
-        root_log_filename_prefix=logging_config.root_log_filename_prefix,
+        root_log_prefix=logging_config.root_log_prefix,
         root_log_level=logging_config.root_log_level
     )
     logger = logging.getLogger(__name__)

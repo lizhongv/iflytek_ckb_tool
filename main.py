@@ -27,9 +27,9 @@ setup_root_logging(
     file_level="DEBUG",
     root_level="DEBUG",
     use_timestamp=False,
-    log_filename_prefix="main",
+    file_log_prefix="main",
     enable_dual_file_logging=True,
-    root_log_filename="root.log",
+    root_log_prefix="root",
     root_log_level="INFO"
 )
 
